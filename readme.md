@@ -15,9 +15,9 @@ The long-term goal here is to for jacuzzi.py to be an interface between Jacuzzi 
 
 I chose to extend pybalboa so that I could leverage the already-proven WiFi and protocol parsing behavior in pybalboa. This dependency turns out to be pretty light; it would not take major effort to decouple jacuzzi.py from pybalboa. Still, I am deeply indebted to: 
 
-garbled1 (https://github.com/garbled1/pybalboa)
-natekspencer (https://github.com/natekspencer)
-ccutrer (https://github.com/ccutrer/balboa_worldwide_app/wiki)
+* garbled1 (https://github.com/garbled1/pybalboa)
+* natekspencer (https://github.com/natekspencer)
+* ccutrer (https://github.com/ccutrer/balboa_worldwide_app/wiki)
 
 along with several others here unnamed, who have helped reverse engineer balboa hot tub control systems and their many rebranded derivatives.
 
@@ -41,13 +41,15 @@ The /docs subdirectory contains several useful sources of reference information 
 
 2. Place the four source files on a machine that also has a connection to that same local network.
 
-3. In that directory, open a terminal window and expand it to fill most, if not all of your screen.
+3. Modify the ip address constant at the top of jacuzziui.py to match your spa's local ip address.
 
-4. Type "python3 jacuzziui.py" at the command prompt to run the user interface. The message window will show new (unique) packets both sent and received. The menu window tells you how to navigate. Press Ctrl-x to quit.
+4. In that directory, open a terminal window and expand it to fill most, if not all of your screen.
 
-5. If jacuzzi.py cannot connect to the spa, it may be because Prolink has gone to sleep. This seems to happen when the spa is unused for awhile. You might try using the topside panel to turn pumps on and off, etc, in order to try to wake Prolink up. 
+5. Type "python3 jacuzziui.py" at the command prompt to run the user interface. The message window will show new (unique) packets both sent and received. The menu window tells you how to navigate. Press Ctrl-x to quit.
 
-6. It also seems to connect reliably whenever the spa is performing a filter cycle, so you can try timing your test to coincide with one of those.
+6. If jacuzzi.py cannot connect to the spa, it may be because Prolink has gone to sleep. This seems to happen when the spa is unused for awhile. You might try using the topside panel to turn pumps on and off, etc, in order to try to wake Prolink up. 
+
+7. It also seems to connect reliably whenever the spa is performing a filter cycle, so you can try timing your test to coincide with one of those.
 
 # Disclaimers
 
