@@ -1,0 +1,1348 @@
+Overview
+--------
+
+9/17/22
+
+This file documents my current understanding of Message Packet Types used by Jacuzzi's Prolink WiFi remote control system.  That understanding is based on a careful inspection of the Prolink Android app after decompiling with apktool, dex2jar, and JD-GUI.  The key parts of that decompiled code, with my added analysis in comments, can be found in the file ProlinkMessageParsing.txt.
+
+It appears to me that Jacuzzi's Prolink system is mostly a modified version of the sinilar Balboa spa control system. I have studied several open source Balboa interfaces for comparison including balboa.py since it is used in the Home Assistant Spa Client integration.  The intention is to use this information eventually either augment or fork that integration so that is will work with Jacuzzi (and perhaps also Sundance??) spas.
+
+Generally the physical configuration is as follows:
+
+The spa itself has an internal control system which manages high power switching for the spa's pumps and heater, as well as low power control of lighting and any other non-essential accessories.  It appears to use a fairly standard RS-485 multidrop serial bus to communicate with the topside operator control panel as well as possibly other peripheral devices.
+
+One such device is the Prolink WiFi module, which communicates with the Android Prolink app through a local WiFi network, or via Jacuzzi's cloud server when the Android app is not local.
+
+Jacuzzi has more recently replaced Prolink with their SmartTub remote monitoring and control system.  This system performs a similar function of connecting the SmartTub Android app to the internal spa control system through the RS-485 bus. But instead of using local WiFi, the SmartTub module connects only to Jacuzzi's cloud server via a cell network connection.  The SmartTub app then connects to the local spa controller only via this cloud intermediary (likely MSQTT compatible??).
+
+There is currently a Home Assistant integration for SmartTub with an open source Python interface (see https://github.com/mdz/python-smarttub). However it does require a cloud connection, and therefore a yearly subscription fee in addition to the SmartTub cell-network-to-spa interface module.
+
+Prolink is now discouraged by Jacuzzi, but still available for those locations where cell service is not available or reliable.  In general it is clear to me that Prolink is an inferior product in terms of its features and software reliability (the decompiled Prolink app looks to me to be a rushed, unfinished deployment).  
+
+That does not mean howeever that SmartTub is necessarily substantially better, especially given the loss of privacy and control that comes from a cloud-only interface.
+
+The Prolink module connects directly to the spa controller with a simple (4-wire?) serial cable.  The SmartTub module also connects to the spa controller via a similar serial cable, except that it requires an additional "Translator" box -- which presumably just converts the SmartTub module's serial I/O channel to RS-485 power and signal levels.
+
+Notably, I have found that both Prolink and SmartTub modules can remain connected to the spa controller *simultaneously* -- not too surprising given the controller's use of an RS-485 Multidrop serial bus.
+
+Finally, it appears that the general format of a "message packet" was designed to work directly in an RS-485 Multidrop environment; e.g. the packets have a header and trailer that allows all devices to receive packets, but then ignore (or simply forward) any packet not specifically addressed to that device.  It also appears to support a "broadcast" address of 0xFF (and 0xFE?).  
+
+There is a lot of good info on this at https://github.com/ccutrer/balboa_worldwide_app/wiki. 
+
+Also you can find work on directly connecting to the RS-485 bus at https://github.com/jshank/bwalink. 
+
+And of course balboa.py is at https://github.com/garbled1/pybalboa
+
+
+Message Types
+-------------
+
+These are message types for Jacuzzi spas, identified by close inspection of the decompiled Prolink Android app.
+
+General Observations About Message Types:
+-----------------------------------------
+
+Common to Balboa, Sundance and Jacuzzi spas is that their spa controllers all regularly send out unsolicited Status Update or "Panel Update" message packets at a typical rate of one or more per second. Presumably this is to make sure that the topside control panel always has an accurate view of the current state of the spa controller.
+
+For the Jacuzzi J-235 spa, its Panel Update message contains at least this information:
+
+Day of the week (1 = Monday)
+Day of the Month
+Current Month
+Current Year
+Current Heating Mode (Auto, Eco, or Day)
+Current Heating State (Ready, Heating, Rest or Ready in Rest)
+Spa State (?)
+Error Code (0 = no error)
+Current Temperature
+Setpoint Temperature
+Temperature Scale (Fahrenheit or Celsius)
+Pump State (Off, Low or High) for up to 3 pumps -- i.e. Circulation if present, Jets 1 and Jets 2 (bubbles)
+Filter 1 Cycle On
+Filter 2 ("Boost") On
+Blower On (?? - may not be relevant to Jacuzzi spas)
+UV On
+Spa clock time
+Spa clock format (12 or 24 hr -- but always 24 hr internally)
+Filter Mode (Off, Cycle 1, others?)
+Locking mode and state (settings, access, service; locked or unlocked)
+Clearray timer (time until bulb replacement)
+Water timer (time until water drain and refill)
+Outer Filter timer (time until main filter replacement)
+Inner Filter timer (if present - time until extra fine filter replacement)
+Spa Wifi State (but in J-235 always seems to report 0 aka "Unknown")
+
+There are also several additional status bytes who's meaning is currently a mystery.
+
+Some key Spa Controller states that are NOT reported in a Panel Update message for a J-235 spa:
+
+Light status (on, off, color, "blend" mode -- cycling through all colors) -- this status may not be available at all in Jacuzzi spas.
+UPDATE 1/8/23: Light status IS available in the 0x23 message type; see the Light Update message type.
+Mister status -- Jacuzzi spas do not appear to support a Mister feature
+Aux 1 and Aux 2 status -- Jacuzzi spas do not appear to support this auxiliary output on/off feature
+Primary Filter Cycle Start Time, Duration, and Frequency -- you need to request this info with a "Filter Cycles Panel Request" message
+Secondary Filter Mode (Holiday, Light or Heavy) -- you need to specifically request this with a "System Info Panel Request" message
+Pump config info -- i.e. # of installed pumps and possible levels (e.g. off, low, high) -- request a "Pump Parsing Request" for these
+
+Message Type: ConnectionEstablished (see the SocketListenerThread class)
+----------------------------------- 
+
+This is a special message type that has no data. It is only sent from the SocketListener to its parent to signal that
+a connection to the spa is established and that it has received data.
+
+Message Type: DeviceConfiguration (see the PacketParser class)
+---------------------------------  
+
+enum value = 1
+id property is not assigned
+Message type byte = 0x2E (same as Balboa)
+
+From BWA docs:
+ Control Configuration 2
+ Sent when the app goes to the Controls screen (? -- not sure if that applies here)
+
+The Prolink app code will set its internal Has... config value to TRUE if any bit in a multiple-bit field is non-zero.
+When there are two bits for a pump, that pump can have up to 3 speeds plus off. So I believe the config value
+defines the number of speeds or settings that item can have e.g. 0 = not present; 1 = On/Off; 2 = Off/Low/High etc
+
+This message packet is nearly identical in format to the Balboa version (when compared to balboa.py).  The only differences
+are in the Has Light and Has Mister bit positions (see below). But this Hubitat code at https://github.com/richardpowellus/HBBWASpaManager/blob/master/HBBWASpaManager_App.groovy matches the Prolink app for Has Light 2, not balboa.py -- suggesting that this may be a bug in balboa.py.  The Hubitat code matches balboa.py in Has Mister though.
+
+Oddly, the J-235 spa controller does not ever send these messages to Prolink -- even when you send it a Panel Request message for device configuration. Perhaps it only supports sending these messages when you are initially setting up the Prolink app?
+
+Also note that the Prolink app does not appear to support Mister or Aux1 and Aux2 features.
+
+Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0A? = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = message type = 0x2E (BMTR_DEVICE_CONFIG_RESP = 0x2E)
+
+Byte 5 Bits 7,6 = Has pump 4 
+Byte 5 Bits 5,4 = Has pump 3
+Byte 5 Bits 3,2 = Has pump 2
+Byte 5 Bits 1,0 = Has pump 1
+
+Byte 6 Bits 7,6 = Has pump 6
+Byte 6 Bits 5,4 = unused
+Byte 6 Bits 3,2 = unused
+Byte 6 Bits 1,0 = Has pump 5
+
+Byte 7 Bits 7,6 = Has light 2
+Byte 7 Bits 5,4 = unused
+Byte 7 Bits 3,2 = unused  (balboa.py says Has Light 2 are these two bits -- may be a bug in balboa.py)
+Byte 7 Bits 1,0 = Has light 1
+
+Byte 8 Bit 7 = Has pump 0
+Byte 8 Bits 6,5,4 = unused
+Byte 8 Bits 3,2 = unused
+Byte 8 Bits 1,0 = Has blower
+
+Byte 9 Bits 7-5 = unused
+Byte 9 Bit 4 = Has mister (in balboa.py and Hubitat Has Mister is 2 bits (5,4), not 1)
+Byte 9 Bit 1 = Has Aux2 (? -- Prolink app appears to have code bugs)
+Byte 9 Bit 0 = Has Aux1
+
+Byte 10 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid
+Byte 11 = 0x7E = message end flag
+
+Prolink Message Type: FilterCycleInfo (see the PacketParser class)
+--------------------------------------
+This looks to be identical in format to the Balboa BMTR_FILTER_INFO_RESP packet, except the Prolink message type byte (Byte 4) is 0x27 instead of 0x23. 
+
+In balboa.py this message is also used as a command sent to the spa controller in order to change filter cycle times.
+
+Interestingly, packets with a type value of 0x23 do get sent to the Prolink app -- but according to the code, it just drops them. For instance:
+
+Real message from Jacuzzi J-235 hot tub received by Home Assistant balboa.py integration:
+              (byte position: 0001020304050607080910111213141516171819202122232425262728293031323334)
+ Spa sent an unknown message: 7e21ffaf2300000000000000ff0064000000ff0000000000000000000000000000507e
+
+The content of the message above appears to have nothing to do with Filter Cycles at all. Yet the J-235 spa controller periodically sends these out unsolicited (similar to the Panel Update status messages) to the broadcast address 0xFF.
+
+UPDATE 1/8/23: When these are sent from the spa controller to the Prolink app, they are actually Light Update status messages! See that message type for more details.
+
+So the description below only applies to this message type when it is send from Prolink to spa controller; not the other direction.
+
+enum value = 5
+enum id property is not assigned
+
+Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0D = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = message type = 0x27 (BMTR_FILTER_INFO_RESP = 0x23)
+Byte 5 = FilterCycle1StartsAtHour (always 24 hr time) 
+Byte 6 = FilterCycle1StartsAtMinute                   
+Byte 7 = FilterCycle1DurationHour
+Byte 8 = FilterCycle1DurationMinute
+Byte 9 = FilterCycle2StartsAtHour (bit 7 is Filter2CycleEnabled bit)
+Byte 10 = FilterCycle2StartsAtMinute
+Byte 11 = FilterCycle2DurationHour
+Byte 12 = FilterCycle2DurationMinute
+Byte 13 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid
+Byte 14 = 0x7E = message end flag
+
+Message Type: ModuleIdentification (see the PacketParser class)
+----------------------------------
+
+Note that we actually get this message back from the controller when the app sends a BMTS_CONFIG_REQ (balboa.py) aka "Module Identification Request" (SundanceRS485.py) aka "Device Present Query message" (Prolink app) -- a simple message with type value = 0x04 and no other data fields. 
+
+The protocol.md file also describes that same simple message with type value 0x04 as a "Clear to Send" message that can be sent by either the spa controller to the Wifi module. or from the module to spa controller, to tell the recipient that it is okay to send its next message (if it has one).
+
+enum value = 6
+id property is not assigned
+3rd byte = 0x94 (BMTS_MOD_IDENT_RESP = 0x94)
+
+Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0D = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = message type = 0x94 (BMTS_MOD_IDENT_RESP = 0x94)
+Byte 5 = don't care
+Byte 6 = don't care
+Byte 7 = don't care
+Byte 8 = don't care (byte 0 of Mac Addr?)
+Byte 9 = don't care (byte 1 of Mac Addr?)
+Byte 10 = don't care (byte 2 of Mac Addr?)
+Byte 11 = don't care (byte 3 of Mac Addr?)
+Byte 12 = don't care (byte 4 of Mac Addr?)
+Byte 13 = don't care (byte 5 of Mac Addr?)
+Byte 14 = Byte 0 of 16-byte iDigiDeviceID (used for connecting to cloud server)
+Byte 15 = Byte 1 of iDigiDeviceID
+Byte 16 = Byte 2 of iDigiDeviceID
+Byte 17 = Byte 3 of iDigiDeviceID
+Byte 18 = Byte 4 of iDigiDeviceID
+Byte 19 = Byte 5 of iDigiDeviceID
+Byte 20 = Byte 6 of iDigiDeviceID
+Byte 21 = Byte 7 of iDigiDeviceID
+Byte 22 = Byte 8 of iDigiDeviceID
+Byte 23 = Byte 9 of iDigiDeviceID
+Byte 24 = Byte 10 of iDigiDeviceID
+Byte 25 = Byte 11 of iDigiDeviceID
+Byte 26 = Byte 12 of iDigiDeviceID
+Byte 27 = Byte 13 of iDigiDeviceID
+Byte 28 = Byte 14 of iDigiDeviceID
+Byte 29 = Byte 15 of iDigiDeviceID
+(There could be more bytes in the packet but if so, Prolink software ignores them
+Byte 30? = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid
+Byte 31? = 0x7E = message end flag
+
+Message Type: PanelUpdate (see the PacketParser class)
+-------------------------
+
+The Prolink module in the hot tub sends these status message packets to the Prolink app constantly.
+
+The packet encoding is similar to balboa.py for some fields, but the byte locations and/or encoding are often totally different -- not surprising given the differences in spa features between the two manufacturers.
+
+Real message from Jacuzzi J-235 hot tub received by Home Assistant balboa.py integration:
+             (byte position: 000102030405060708091011121314151617181920212223242526272829303132333435363738)
+Spa sent an unknown message: 7e25ffaf16133a1c081612005dfa500000008200005d0206000a8000008d000000ff000000d87e
+
+NOTE: the Clearray, Water, and Filter timer values have their LSB and MSB values mislabeled (swapped). So the MSB is actually the LSB, and the LSB is the MSB.
+
+enum value = ? (not included in list of static constructors)
+id property is initialized to 1
+Prolink code will ignore this message if total packet size is not at least 15 bytes
+
+Message packet contents: (parenthetical values are examples taken from actual J-235 message packet above)
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = ?? = message length (may vary; not including start and end flag bytes) (0x25 = 37)
+Byte 2 = 0xFF = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xAF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x16 (BMTR_STATUS_UPDATE = 0x13)
+Byte 5 = CurrentTimeHour (0x13 = 19)
+Byte 6 = CurrentTimeMinute (0x3A = 58)
+Byte 7 Bits 7,6,5 = currentWeek (day of week??) (0b000 = 0) -- actually day of week 1 = Monday 0 = Sunday
+Byte 7 Bits 4,3,2,1,0 = daysInMonth (0b11100 = 28) -- actually day of month
+Byte 8 = currentMonth (0x08 = Aug?)
+Byte 9 = currentYear (since 2000) (0x16 = 2022)
+Byte 10 Bits 7,6 = Filter2Mode (0b00 = off)
+Byte 10 Bits 5,4 = HeatModeState (0b01 = on-low?)
+Byte 10 Bits 3,2,1,0 = SpaState (values of 1,2,8,9 or 10 get forced to -1) (0b0010 = 2)
+Byte 11 = errorCode (0x00 = no error)
+  If errorCode value = 21 and TabActivityClass.modalval == 1 then errorCode gets forced to 0
+  If errorCode value is 4,5,6,7,8,9,10 or 14, then errorCode gets forced to -1
+Byte 12 = ActualTemperature (0x5D = 93)
+Byte 13 = don't care? (0xFA)
+Byte 14 = SetTemperature (0x50 = 80)
+Byte 15 Bits 7,6 = Pump3State (0b00)
+Byte 15 Bits 6,5 = Pump2State (bit posn off by 1??) (0b00)
+Byte 15 Bits 4,3,2 = Pump1State (0b000)
+Byte 15 Bits 2,1,0 read but not used (0b000)
+Byte 16 Bits 6,5 = IsSecondaryON (0b00)
+Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??) (0b00)
+Byte 16 Bits 4,3 = IsBlowerON (Bit posn off by 1??) (0b00)
+Byte 16 Bits 2,1 = IsUVON (0b00)
+Byte 17 = don't care? (0x00) -- this appears to go to 0x01 whenever pump 1 is not Off -- flow sensor?
+Byte 18 Bits 2,1 = Is24HourTime (12 hr only if both bits are 0) (0b01 = 24hr)
+Byte 18 Bit 0 = TemperatureScale (Degrees F only if bit is 0) (0b0 = Fahrenheit)
+Byte 19 = don't care? (0x00)
+Byte 20 Bits 4,3 = settingLock (0b00)
+Byte 20 Bits 2,1 = accessLock (0b00)
+Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??) (0b00)
+Byte 21 = don't care? (0x5D) -- this is actually current temperature -- same as byte 12
+Byte 22 = don't care? (0x02)
+Byte 23 = don't care? (0x06)
+Byte 24 = CLEARRAYLSB (0x00) -- actually MSB
+Byte 25 = CLEARRAYMSB (0x0A) -- actually LSB
+Byte 26 = WATERLSB (0x80) -- actually MSB
+Byte 27 = WATERMSB (0x00) -- actually LSB
+The following bytes may not be present
+Byte 28 = OUTERFILTERLSB (0x00) -- actually MSB
+Byte 29 = OUTERFILTERMSB (0x8D) -- actually LSB
+The following bytes may not be present
+Byte 30 = INNERFILTERLSB (0x00) -- actually MSB
+Byte 31 = INNERFILTERMSB (0x00) -- actually LSB
+The following byte may not be present
+Byte 32 Bits 7,6,5,4 = WiFiState (0b0000 = unknown)
+  0 = SpaWifiState.Unknown
+  1 = SpaWifiState.SoftAPmodeUnavailable
+  2 = SpaWifiState.SoftAPmodeAvailable
+  3 = SpaWifiState.InfrastructureMode
+  4 = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud
+  5 = SpaWifiState.InfrastructureModeConnectedToNeworkCloud
+  14 = SpaWifiState.LINKINGTONETWORK
+  15 = SpaWifiState.NOTCOMMUNICATINGTOSPA
+(There could be more bytes in the packet but if so, Prolink software ignores them
+Byte 33 = don't care (0xFF)
+Byte 34 = don't care (0x00)
+Byte 35 = don't care (0x00)
+Byte 36 = don't care (0x00)
+Byte 37 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid (0xD8)
+Byte 34? = 0x7E = message end flag
+
+Error Code Values, Resource IDs & Resource Strings
+--------------------------------------------------
+These are error code values that the Prolink code recognizes for Byte 11 of Panel Update message packets
+
+For each error code listed below:
+The first value is the error message resource ID (base 10)
+The second value is the resource ID in hexidecimal
+The next value is the resource ID name (public.xml translates hex ID to name)
+The last value is the actual error message string associated with the error code (strings.xml translates name to actual message string)
+
+i.e. lookup hex number in public.xml for name of string and then use name to lookup actual string in strings.xml
+
+Error Code 0 
+= "" (empty string)
+Any unrecognized error code value will default to this
+
+Error Code 1 
+= 2131624083 
+= 0x7F0E0093 
+= "cleanproclarity" 
+= It’s time to clean or replace your ProClarity and ProClear filters. Contact your authorized dealer if new filters are needed.
+
+Error Code 2
+= 2131624355
+= 0x7F0E01A3
+= "spadrainedrefilled"
+= Your spa needs to be drained and refilled with fresh water. Refer to your owner’s manual for draining procedure.
+
+Error Code 3
+= 2131624313
+= 0x7F0E0179
+= "replaceclearraybulb"
+= It’s time to replace your CLEARRAY bulb. Contact your authorized dealer for replacement parts
+
+Error Code 4,5,6,7,8,9,10
+The Prolinnk Code treats these as illegal; it forces the error code value to -1 instead
+
+Error Code 11
+= 2131624179
+= 0x7F0E00F3
+= "flowswitch"
+= The flow switch is malfunctioning open. Heater is disabled. The circulation pump’s filter is excessively dirty, or an air lock has occurred at the circulation pump intake. Contact your authorized dealer or service organization.
+
+Error Code 12
+= 2131624180
+= 0x7F0E00F4
+= "flowswithchedclosed"
+= The flow switch is malfunctioning closed. Heater is disabled. Contact your authorized dealer or service organization.
+
+Error Codes 13,14,15,16,17,18
+= 2131624388
+= 0x7F0E01C4
+= "temperaturesensor"
+= The temperature sensor is not functional. Heater is disabled. Contact your authorized dealer or service organization.
+
+But also note that the Prolink code forces error code 14 to a value of -1
+
+Error Codes 19,20
+= 2131624118
+= 0x7F0E00B6
+= "controllertemperature"
+= Controller temperature has exceeded acceptable limits. If condition persists, provide shade for equipment side of spa. Contact your authorized dealer or service organization.
+
+Error Code 21
+= 2131624084
+= 0x7F0E0094
+= "cleanproclaritydepth"
+= It’s time to replace your ProClarity Depth filter. Contact your authorized dealer for a new filter
+
+The Prolink Code will force this error code value to 0 if TabActivityClass.modalval == 1
+
+Error Codes 22, 23, 28, 29
+= 2131624149
+= 0x7F0E00D5
+= "donotenterthewater"
+= DO NOT ENTER THE WATER. Water temperature is above acceptable limits. Your spa is deactivated. Remove spa cover to speed cooling. Contact your authorized dealer or service organization.
+
+Error Code 24
+= 2131624336
+= 0x7F0E0190
+= "shortedflowswitch"
+= Shorted flow switch on system start-up (system is disabled). Contact your authorized dealer or service organization.
+
+Error Code 25
+= 2131624337
+= 0x7F0E0191
+= "shortedflowswitchdetected"
+= Shorted flow switch on system start-up and freeze condition detected. Contact your authorized dealer or service organization.
+
+Error Code 26
+= 2131624367
+= 0x7F0E01AF
+= "spawaterismore20"
+= Spa water is more than 20 ̊F cooler than the temperature set point, heater activated. The spa will stay in the mode until the water temperature reaches 15 ̊F below the set temperature. No Corrective action is necessary.
+
+Error Code 27
+= 2131624292
+= 0x7F0E0164
+= "potentialfreeze"
+= A potential freeze condition has been detected. Jet pumps operate until the spa is out of danger. No action is required. If condition persists, contact your authorized dealer or service organization.
+
+Error Code 30, 31
+= 2131624220
+= 0x7F0E011C
+= "lightsensor"
+= The light sensor is not functional. Contact your authorized dealer or service organization.
+
+Error Code 32
+= 2131624375
+= 0x7F0E01B7
+= "stereotrouble"
+= The stereo is having trouble communicating to your spa. Contact your authorized dealer or service organization.
+
+
+Message Type: Light Update (not recognized by Prolink app)
+--------------------------
+ 
+The Prolink module in the hot tub also sends these status message packets to the Prolink app constantly. However this one is completely ignored by the Prolink app so no clues as to its purpose are available from the decompiled app. 
+
+However by using the Prolink app to send light change commands we see these Light Update status messages change in a predictable way -- they indicate the actual state of the lights at any given time.
+
+Real messages from Jacuzzi J-235 hot tub received by the jacuzziui.py command-line tool:
+             (byte position: 0001020304050607080910111213141516171819202122232425262728293031323334)
+    When all lights are off: 7e21ffaf2300000000000000ff0064000000ff0000000000000000000000000000507e
+    When solid RED selected: 7e21ffaf23060064ff000000ff0064000000ff0000000000000000000000000000587e
+   When solid BLUE selected: 7e21ffaf230200640000ff00ff0064000000ff0000000000000000000000000000287e
+  When solid GREEN selected: 7e21ffaf2303006400ff0000ff0064000000ff0000000000000000000000000000ab7e
+     RED with brightness 80: 7e21ffaf23060050ff000000ff0064000000ff0000000000000000000000000000747e
+     RED with brightness 60: 7e21ffaf2306003cff000000ff0064000000ff0000000000000000000000000000657e
+     RED with brightness 40: 7e21ffaf23060014ff000000ff0064000000ff0000000000000000000000000000b17e
+     RED with brightness 20: 7e21ffaf23060014ff000000ff0064000000ff0000000000000000000000000000b17e
+
+Message packet contents: (parenthetical values are examples taken from actual SOLID RED J-235 message packet above)
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x21 = message length (not including start and end flag bytes) (0x21 = 33)
+Byte 2 = 0xFF = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xAF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x23 (same type value as Save Filter Cycle messages)
+Byte 5 = Color code (0x06 = Red) -- see below
+Byte 6 = UnknownByte6 (0x00)
+Byte 7 = Brightness level (0x64 = 100)
+Byte 8 = Red Level (0xFF = 255)
+Byte 9 = Green Level (0x00)
+Byte 10 = Blue Level (0x00)
+Byte 11 = UnknownByte11 (0x00)
+Byte 12 = UnknownByte12 (0xFF)
+Byte 13 = UnknownByte13 (0x00)
+Byte 14 = UnknownByte14 (0x64)
+Byte 15 = UnknownByte15 (0x00)
+Byte 16 = UnknownByte16 (0x00)
+Byte 17 = UnknownByte17 (0x00)
+Byte 18 = UnknownByte18 (0xFF)
+Byte 19 = UnknownByte19 (0x00)
+Byte 20 = UnknownByte20 (0x00)
+Byte 21 = UnknownByte21 (0x00)
+Byte 22 = UnknownByte22 (0x00)
+Byte 23 = UnknownByte23 (0x00)
+Byte 24 = UnknownByte24 (0x00)
+Byte 25 = UnknownByte25 (0x00)
+Byte 26 = UnknownByte26 (0x00)
+Byte 27 = UnknownByte27 (0x00)
+Byte 28 = UnknownByte28 (0x00)
+Byte 29 = UnknownByte29 (0x00)
+Byte 30 = UnknownByte30 (0x00)
+Byte 31 = UnknownByte31 (0x00)
+Byte 32 = UnknownByte32 (0x00)
+Byte 33 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid (0x58)
+Byte 34 = 0x7E = message end flag
+
+Color Codes (from Byte 5 above):
+0x00 = None/Off
+0x01 = ??
+0x02 = Blue
+0x03 = Green
+0x04 = ??
+0x05 = Yellow/Orange
+0x06 = Red
+0x07 = Violet
+0x08 = ??
+0x09 = Aqua
+
+0x80 = Blend mode
+
+These codes match the color command codes sent to the spa by Prolink (see LightAndBrightnessButtons.class):
+1 => ?
+2 => "Light" = "Blue"
+3 => "Light" = "Green"
+4 => ?
+5 => "Light" = "Orange"
+6 => "Light" = "Red"
+7 => "Light" = "Purple"
+8 => ?
+(9) => "Light" = "Aqua" (does not seem to be fully supported in Prolink app)
+
+Brightness ("Experience") levels in the Prolink app:
+
+100,80,60,40,20, and 0 (off)
+
+Light Control Behavior:
+
+In the Prolink app, if you press a specific color button then the LEDs change to that color. 
+If you press a brightness level less than 100 then they dim to that level.
+If you press a brightness level of 0 then they turn off.
+If you press a brightness level other than 0 when the lights are off, then that starts the "blend" mode where they go through a multicolor sequence that changes once per second.
+If you press a different light level then the blend cycle dims to that new level.
+If you press the same brightness level again while they are in "blend" then it switches to another blend mode (of which there are 3). In each blend mode, two of the 3 primary RGB colors cycle through a sequence of levels and the third primary color is off.
+
+Message Type: Primaryfiltration (see the PacketParser class)
+-------------------------------
+
+Prolink code just reads bytes 5 and 6 of the message packet and saves those values to the SpaControlState object.
+Oddly, it then does nothing with that result.
+
+The spa controller returns this message type when it receives a "Filter Cycles Panel Request" (payload1 = 1, payload2 = 0)
+
+Even though byte 6 data is called "EndTimeHour" in Prolink code, it is actually the duration of the filter cycle in hours. So the values of 0x11, 0x01 really mean start time a 17 hrs (5pm) with a duration of 1 hour.
+
+enum value = 8
+id property is initialized to 1
+3rd byte = 0x1B (BMTS_FILTER_REQ = 0x22 -- same as PanelUpdate!)
+
+Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x05 = message length (may vary; not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF) 
+Byte 4 = 0x1B (There is no similar message type in Balboa systems)
+Byte 5 = StartTimeHour (0x11)
+Byte 6 = EndTimeHour (0x01) -- actually duration hours though!
+(message packet may have more data bytes, but if so Prolink ignores them)
+Byte 7 = ?? (0x04) -- this appears to be the number of primary filter cycles per day. Manual says 1,2,3,4, or 8 are allowed values
+Byte 8 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid
+Byte 9 = 0x7E = message end flag
+
+Message Type: Pupmpstateparsing (see the PacketParser class)
+-------------------------------
+
+Prolink code just reads the 6 upper bits of Byte 11 of the message packet (2 bits per pump), counts the number
+of pumps present, and saves that to SpaControlState.NumberofPump. However the code never does anything with
+this SpaControlState object.
+
+This appears to be a pump configuration status message. It identifies whether or not a pump 1, 2 or 3 is present (0b00 = not present) and how many speeds it has (0b01 = only On/Off, 0b10 = 0ff/Low/High, etc). Apparently there is no "pump 0"
+
+Real message from Jacuzzi J-235 hot tub received by Home Assistant balboa.py integration:
+              (byte position: 0001020304050607080910111213141516171819)
+ Spa sent an unknown message: 7e120abf1dffffffff020618061100c0040b4e7e
+
+enum value = 9
+id property is initialized to 1
+3rd byte = 0x1D 
+
+Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x05 = message length (may vary; not including start and end flag bytes) (0x12 = 18)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1D (There is no similar message type in Balboa systems)
+Byte 5 = don't care (0xFF)
+Byte 6 = don't care (0xFF)
+Byte 7 = don't care (0xFF)
+Byte 8 = don't care (0xFF)
+Byte 9 = don't care (0x02)
+Byte 10 = don't care (0x06)
+Byte 11 bits 7,6 = Pump3 config (0b00 = no pump) 
+Byte 11 bits 5,4 = Pump2 config (0b01 = on/off pump)
+Byte 11 bits 3,2 = Pump1 config (0b10 = off/low/high pump)
+Byte 11 bits 1,0 = don't care (0b00)
+(message packet may have more data bytes, but if so Prolink ignores them)
+Byte 12 (0x06)
+Byte 13 (0x11)
+Byte 14 (0x00)
+Byte 15 (0xC0)
+Byte 16 (0x04)
+Byte 17 (0x0B)
+Byte 18 = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid (0x4E)
+Byte 19 = 0x7E = message end flag
+
+Message Type: SetupParameters (see the PacketParser class)
+-----------------------------
+
+enum value = 2
+id property is initialized to 1
+3rd byte = 0x1E
+
+This message type is defined in the Prolink app but it does not seem to be used in the app.  Might be a leftover from Balboa code that was not needed or implemented.  This message type in Balboa systems seems to handle features (such as high and low temperature ranges) that Jacuzzi does not support.
+
+There is a Panel Request Type of the same name, so presumably the app can request setup parameters from the spa controller. But there does not seem to be any code in Prolink to parse this message type if it is received from the spa controller. And yet the Jacuzzi spa controller does return this message type.
+
+In the actual J-235 hot tub, sending a Panel Request message (type 0x19 with payload1 = 0x04, payload2 = 0x00) to the spa controller returns this message with type value 0x1E which is not defined in either Balboa systems or the Prolink app. The two data bytes in the returned message packet (Byte 5 and 6) always seem to be 0x18 and 0x01.
+
+Received Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x07 = message length (may vary; not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1E = 30 (BMTR_SETUP_PARAMS_RESP = 0x25)
+Byte 5 = ?? (0x18)
+Byte 6 = ?? (0x01)
+Byte 7 = ?? = Checksum (0x6E) -- any value will pass though; Prolink code accepts any value as valid
+Byte 8 = 0x7E = message end flag
+
+Message Type: SystemInformation (see the PacketParser class)
+-------------------------------
+
+The Prolink app just reads byte 7 of the message packet and if the value there is less than 6, it sets spaSystemInformation.isOldVersion to true, or false otherwise. The Prolink app then sends this SpaSystemInformation object to the parent process.
+
+However, in the Jacuzzi J-235, sending a Panel Request for System Information does not return this message type (0x24). Instead it returns a Primary Filtration (aka Filter Cycle Information) message type 0x1C which contains the current Primary Filtration Start time and duration.
+
+enum value = 3
+id property is initialized to 1
+3rd byte = 0x24 (same as Balboa)
+
+(Presumed) Message packet contents:
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x05 = message length (may vary; not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x24 (BMTR_SYS_INFO_RESP = 0x24)
+Byte 5 = don't care (IO in balboa.py?)
+Byte 6 = don't care (I1 in balboa.py?)
+Byte 7 = version code; if less than 6, isOldVersion is TRUE
+(if there is additional data in the message packet, Prolink ignores it)
+Byte 8? = ?? = Checksum -- any value will pass though; Prolink code accepts any value as valid
+Byte 9? = 0x7E = message end flag
+
+Message Type: Unknown (see the PacketParser class)
+---------------------
+
+Any unrecognized message packet becomes an Unknown type, which is just reported in the log and discarded. Fortunately the
+log contains the unknown message packet itself, so at least you can see exactly what got rejected.
+
+enum value = 4
+id property is initialized to 1
+3rd byte = anything else
+
+---------------------
+Command Message Types
+---------------------
+
+These messages are sent from the Prolink app to the spa controller in order to change its settings.  You can find the code for these in the WifiSpaCommunicator class, which implements the ISpaCommunicator interface.  Other implementations include the DemoCommunicator class (a stand alone demo mode) and the iDigiCommunicator class (for a cloud connection to spa)
+
+Send Button Code Message Type (see WifiCommunicator.SendButtonCode() )
+-----------------------------
+
+This appears to be identical to the BMTS_CONTROL_REQ message in balboa.py, except for the type code of 0x1A instead of 0x11
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1A = 26 (BMTS_CONTROL_REQ = 0x11)
+Byte 5 = Button code (see below)
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Button codes: (see spaButtonCode enum class)
+
+These codes exactly match the codes defined in balboa.py
+Note however that pump 1 through 3 control in Prolink seems to use a different type code (0x17 = 23 instead of 0x1A = 26)
+See for example Pump1ControlPushed()
+
+Note also that balboa.py may have an off-by-one bug in pump_status[] and pump_array[]. They are initialized with 6 elements
+but there are a maximum of 6 pumps PLUS pump 0; so 7 total pumps. In jacuzzi spas apparently there is no pump 0, or pumps 5
+and 6 for that matter, so no bug there.
+
+Pump1 = 4 = 0x04
+Pump2 = 5 = 0x05
+Pump3 = 6 = 0x06
+Pump4 = 7 = 0x07
+Pump5 = 8 = 0x08
+Pump6 = 9 = 0x09 (but Prolink does not appear to support pump 6)
+Light1 = 17 = 0x11 
+Light2 = 18 = 0x12 
+Mister = 14 = 0x0E
+Aux1 = 22 = 0x16
+Aux2 = 23 = 0x17
+Blower = 12 = 0x0C
+TempRange = 80 = 0x50
+HeatMode = 81 = 0x51
+
+Connect To WiFi Message Type (see WifiCommunicator.connectToWifi())
+----------------------------
+
+(matches the Balboa message format exactly but connection method and security type codes are slightly different)
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x69 = message length (105 bytes; not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x92 (BMTS_SET_WIFI = 0x92)
+Byte 5 = Connection method ID (see below)
+Byte 6 = SSID length (32 bytes max)
+Byte 7-38 = SSID padded with trailing zeros
+Byte 39 = Security type ID (see below)
+Byte 40 = Optional Password length (64 bytes max)
+Byte 41-104 = Optional Password padded with trailing zeros
+Byte 105 = Checksum over bytes 1 through 104 (see utlity.CalculateChecksum())
+Byte 106 = 0x7E = message end flag
+
+Connection method IDs: (see ConnectionMethod enum class)
+ 
+0 = Open
+1 = WEP, WPA, WPA2, etc
+2 = WPS
+
+Security type IDs: (see SecurityType enum class)
+
+0 = Open or WPSMode
+1 = WEP40
+2 = WEP104
+4 = WPAwithpassphrase
+6 = WPA2withpassphrase
+
+Filter Boost Control Message Type (see WifiCommunicator.FilterBoostControlPushed() )
+---------------------------------
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x17 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x0D = 13
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Heat Mode Control Message Type (see WifiCommunicator.HeatModePushed() )
+------------------------------
+
+This is apparently another type of Button Code (type code 0x1A)
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1A (BMTS_CONTROL_REQ = 0x11)
+Byte 5 = Heat mode (see below)
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Heat mode codes: (lookup hex number in public.xml for name of string and then use name to lookup actual string in strings.xml)
+0 => 2131624027 = 0x7F0E005B = "auto" = "Auto" (maintain temperature at all times)
+1 => 2131624152 = 0x7F0E00D8 = "echo" = "Eco" (maintain temp only between 5pm and 7am)
+2 => 2131624130 = 0x7F0E00C2 = "day" = "Day" (maintain temp only between 7am and 5pm)
+
+Light Color Control Message Type (see WifiCommunicator.LightColorCommands() )
+--------------------------------
+
+Note that color control and brightness control use the same message type, with only slight changes in the message content.
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0D = 13 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x21 = 33 (BMTS_SET_TIME = 0x21)
+Byte 5 = 0x1F = 31 (=0x2F for brightness control)
+Byte 6 = Color control code
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0xFF = -1 (brightness field)
+Byte 12 = 0x00 = 0
+Byte 13 = Checksum over bytes 1 through 12 (see utlity.CalculateChecksum())
+Byte 14 = 0x7E = message end flag
+
+Color control codes: (see LightAndBrightnessButtons.class)
+
+"Light" is an analytics catagory sent to Amazon for event "Control Tapped"
+
+1 => (This color control value is used when changing brightness level)
+2 => "Light" = "Blue"
+3 => "Light" = "Green"
+4 => ?
+5 => "Light" = "Orange"
+6 => "Light" = "Red"
+7 => "Light" = "Purple"
+(9) => "Light" = "Aqua" (does not seem to be fully supported in Prolink app, but does seem to work in the spa controller)
+
+These seem to match the color control codes used in the SundanceRS485.py app:
+
+        DISPLAY_MAP = [
+            [128,"Fast Blend"], #with 2 second constant
+            [127,"Slow Blend"], #with 4 second constant
+            [255,"Frozen Blend"],
+            [2,"BLue"],
+            [7,"Violet"],
+            [6,"Red"],
+            [8,"Amber"],
+            [3,"Green"],
+            [9,"Aqua"],
+            [1,"White"],
+        ]
+
+From Prolink code inspection it appears that on each button press the Prolink app will take one step through a cycle of the values 1 to 7. 
+
+In reality the Prolink app has separate buttons for 6 of the colors (Blue, Violet, Red, Amber, Green and Aqua). If you press a color button at any time, then the LEDs will turn to that solid color. (Aqua does not seem to work though.) 
+
+Light Experience Control Message Type (see WifiCommunicator.LightExperienceCommands() )
+-------------------------------------
+
+"Experience" here really just seens to mean brightness level
+
+Note that color control and brightness control use the same message type, with only slight changes in the message content.
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0D = 13 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x21 = 33 (BMTS_SET_TIME = 0x21)
+Byte 5 = 0x2F = 47 (=0x1F for color control)
+Byte 6 = 0x01 = 1 (color control field)
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = Experience control code
+Byte 12 = 0x00 = 0
+Byte 13 = Checksum over bytes 1 through 12 (see utlity.CalculateChecksum())
+Byte 14 = 0x7E = message end flag
+
+Experience control codes: (see LightAndBrightnessButtons.class)
+
+"Brightness" is a analytics catagory sent to Amazon for event "Control Tapped"
+
+0 => 0 = 0x00 => "Brightness" = "Bright0"
+1 => 20 = 0x14 => "Brightness" = "Bright20"
+2 => 40 = 0x28 => "Brightness" = "Bright40"
+3 => 60 = 0x3C => "Brightness" = "Bright60"
+4 => 80 = 0x50 => "Brightness" = "Bright80"
+5 => 100 = 0x64 => "Brightness" = "Bright100"
+
+Inspecting Prolink code suggests that on each button press the Prolink app will take one step through a cycle of the values 0 to 5. But in reality the app has 6 buttons for LED brightness level. These correspond to 0, 20, 40, 60, 80, and 100% levels. If you press the 0 level then the LEDs will turn off. If you press any other level then the lights will go to that brightness level, and if the LEDs were off then instead of going to a solid color they will cycle through all colors at a slow rate ("blend" mode). Although two cycle rates are available the Prolink app does not appear to allow you to select which one. It either always goes to one (4 second??) or goes to the last one you selected by using the topside control panel.
+
+Lock Control Message Type (see WifiCommunicator.LockControlPushed() )
+-------------------------
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0A = 10 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1F = 31 (BMTS_SET_TIME = 0x21)
+Byte 5 = param1
+Byte 6 = param2
+Byte 7 = param3
+Byte 8 = param4
+Byte 9 = param5
+Byte 10 = Checksum over bytes 1 through 9 (see utlity.CalculateChecksum())
+Byte 11 = 0x7E = message end flag
+
+Parameter encoding: (see LightAndLock_Screen.updateStatus() )
+Param1 = 81 = 0x51 = lock temperature? 
+Param1 = 41 = 0x29 = unlock temperature? 
+Param1 = 82 = 0x52 = lock spa? 
+Param1 = 42 = 0x2A = unlock spa? 
+
+Param2 through param5 = 4 decimal digit values of a user-entered lock/unlock code?
+
+In the Prolink app the lock options are for settings lock, access lock, and service lock.  There is no password to enter.  To unlock you press the topside panel's menu button for 10 seconds and it clears whatever lock is currently present.
+
+Pump Control Message Type (see for example WifiCommunicator.Pump1ControlPushed() )
+-------------------------
+
+This appears to be identical to the BMTS_CONTROL_REQ message in balboa.py, except for the type code of 0x17 instead 0f 0x11 See the Send Button Code Message Type above for more info.
+
+Note also that balboa.py may have an off-by-one bug in pump_status[] and pump_array[]. They are initialized with 6 elements but there are a maximum of 6 pumps PLUS pump 0; so 7 total pumps. In jacuzzi spas apparently there is no pump 0, or pumps 5 and 6 for that matter, so no bug there.
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (may vary; not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x17 = 23 (BMTS_CONTROL_REQ = 0x11)
+Byte 5 = Pump code (see below)
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Pump codes:
+
+These codes exactly match the codes defined in balboa.py
+Note however that pump 1 through 3 control in Prolink seems to use a different type code (0x17 = 23 instead of 0x1A = 26)
+
+Pump1 = 4 = 0x04
+Pump2 = 5 = 0x05
+Pump3 = 6 = 0x06
+
+Reset ClearRay Control Message Type (see WifiCommunicator.ResetClearRay() )
+-----------------------------------
+
+Resets the maintenance countdown timer for the ClearRay bulb
+
+This uses the same type code (0x22 = 34) as Reset ProClarity
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x02 = 2
+Byte 6 = 0x01 = 1
+Byte 7 = 0x6D = 109
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+
+Reset ProClarity Control Message Type (see WifiCommunicator.ResetProClarity() )
+-----------------------------------
+
+Resets the maintenance countdown timer for the ProClarity filter
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x20 = 32
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = Reset code
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Possible reset codes:
+0x78 = 120
+0xB4 = -76
+
+Reset ProClarity Depth Control Message Type (see WifiCommunicator.ResetProClarityDepth() )
+-------------------------------------------
+
+Resets the maintenance countdown timer for the ProClarity Depth filter (ultrafine particle filter)
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x80 = -128
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x5A = 90
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Reset Water Control Message Type (see WifiCommunicator.ResetWater() )
+--------------------------------
+
+Resets the maintenance countdown timer for draining and refilling the spa water??
+Or maybe sets the countdown time in days?
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x08 = 8
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = Water reset code
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Possible water reset codes:
+0x1E = 30
+0x3C = 60
+0x5A = 90
+0x78 = 120
+0xB4 = 150
+0x78 = 180
+0xB4 = 210
+0xB4 = 240
+0xB4 = 270
+0xB4 = 300
+0xB4 = 330
+0xB4 = 365
+
+The Prolink app only provides the 30 through 180 options
+
+Save Filter Cycle Message Type (see WifiCommunicator.SaveFilterCycle() )
+------------------------------
+
+Saves the start time and duration of filter cycle 1 and (if enabled) cycle 2
+NOTE that this is a message sent TO the spa controller. Message type 0x23 received FROM the spa controller is different (see Light Update)
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0D = 13 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x23 = 35 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = Cycle1StartAtHr
+Byte 6 = Cycle1StartAtMin
+Byte 7 = Cycle1DurationHr
+Byte 8 = Cycle1DurationMin
+Byte 9 = Cycle2Enabled (0 or 128) ORed with Cycle2StartAtHr
+Byte 10 = Cycle2StartAtMin
+Byte 11 = Cycle2DurationHr
+Byte 12 = Cycle2DurationMin
+Byte 13 = Checksum over bytes 1 through 12 (see utlity.CalculateChecksum())
+Byte 14 = 0x7E = message end flag
+
+Secondary Filter Cycle Message Type (see WifiCommunicator.SecondaryFilterCycle() )
+-----------------------------------
+
+The spa controller returns this message type when it receives a "System Info Panel Request" (payload1 = 2, payload2 = 0)
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x08 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1C = 28 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = Param1 (0x00)
+Byte 6 = 0x00 = 0 (Ox0A)
+Byte 7 = 0x00 = 0 (0x0A)
+Byte 8 = Checksum over bytes 1 through 7 (see utlity.CalculateChecksum())
+Byte 9 = 0x7E = message end flag
+
+Param1: "Holiday", "Light" or "Heavy"
+Param1 values = 0,1, or 2?? (radio buttons)
+
+Send Device Present Query Message Type (see WifiCommunicator.SendDevicePresentQuery() )
+--------------------------------------
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x05 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x04 (BMTS_CONFIG_REQ = 0x04) -- or others?; see below
+Byte 5 = Checksum over bytes 1 through 4 (see utlity.CalculateChecksum())
+Byte 6 = 0x7E = message end flag
+
+In balboa.py this is called a "config request" aka "module identification request". The spa controller will respond by sending back a module identification packet (type code 0x94) that contains the MAC address and IDIGI Device ID string.
+
+In sundanceRS485.py (which uses a direct, off-the-shelf TCP-to-RS485 device instead of a Wifi module) there is this:
+
+#Common to all known Balboa Products
+CLIENT_CLEAR_TO_SEND = 0x00 (received by Wifi module which then responds with a CHANNEL_ASSIGNMENT_REQ packet)
+CHANNEL_ASSIGNMENT_REQ = 0x01
+CHANNEL_ASSIGNMENT_RESPONCE = 0x02
+CHANNEL_ASSIGNMENT_ACK = 0x03
+EXISTING_CLIENT_REQ = 0x04
+EXISTING_CLIENT_RESPONCE = 0x05
+CLEAR_TO_SEND = 0x06 (received by Wifi module which then responds by sending a pending message, or else NOTHING_TO_SEND)
+NOTHING_TO_SEND =  0x07
+
+Channel assignment is a handshake process only performed on the RS485 bus -- whereby the spa controller gives a unique address value ("channel") to a newly-discovered device.  Apparently Prolink Wifi modules always get the address value 0x0A.
+
+All of this suggests to me that the Prolink Wifi module sends a message type of 0x04 to the spa controller when the module is already connected, and the spa controller responds with "module identification" -- actually spa controller ID information -- specifically the spa controller's MAC address and idigi device ID string.
+
+If instead the spa controller sends a 0x04 message type to the Wifi module, then consistent with Sundance spas, I would expect that the Prolink Wifi module replies to the spa controller with an EXISTING_CLIENT_RESPONCE (0x05) message type.
+
+Send Panel Request Message Type (see WifiCommunicator.SendPanelRequest() )
+-------------------------------
+
+In balboa.py there are similar message types but the message type codes and packet lengths are different. Interestingly though, the payload values are identical. 
+
+Do not assume that the enumerated type names below accurately reflect what the spa actually returns in response to that request. For instance a "System Info" request to a Jacuzzi J-235 hot tub returns a "Secondary Filter" message (type code 0x1C).
+
+The Prolink app code for sending this message type seems to be filled with errors so this may not be 100% accurate.  
+
+Panel request types: (from PanelRequestType enum class)
+
+0 = "SystemInfo"
+1 = "FilterCycles"
+2 = "SetupParameters"
+3 = "DeviceConfiguration"
+4 = "PrimaryFiltration"
+5 = "PupmpState"
+
+The default message packet for a panel request type is as follows:
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x07 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x19 = 25 (BMTS_PANEL_REQ = 0x22)
+Byte 5 = payload1
+Byte 6 = payload2
+Byte 5 = Checksum over bytes 1 through 6 (see utlity.CalculateChecksum())
+Byte 6 = 0x7E = message end flag
+
+Payload1 and payload2 values:
+
+"SystemInfo"            => payload1 = 2, payload2 = 0 ("system information" in balboa.py)
+"FilterCycles"          => payload1 = 1, payload2 = 0 ("filter cycles" in balboa.py)
+"SetupParameters"       => payload1 = 4, payload2 = 0 ("setup parameters" in balboa.py)
+"DeviceConfiguration"   => payload1 = 0, payload2 = 1 ("device config" in balboa.py)
+"PrimaryFiltration"     => payload1 = 1, payload2 = 0 (same as "filter cycles")
+"PupmpState"            => payload1 = 16, payload2 = 0
+
+According to balboa_worldwide_app/protocol.md, there may also be these valid payload values:
+
+"Preferences Request"   => payload1 = 8, payload2 = 0
+"Fault Log Request"     => payload1 = 20, payload2 = EN, payload3 = 0 (EN = Entry Number) -- probably not valid for Jacuzzi Prolink
+
+And https://github.com/rsrawley/spaControl/blob/master/spa.js also has this:
+
+"getGfciTest"           => payload1 = 80, payload2 = 0, payload3 = 0
+
+For my (Nov 2021) Jacuzzi J-235 spa at least, these are the replies I get from sending these Prolink panel requests:
+
+Oddly, while a Secondary Filter Message 0x1C can be parsed, the packetParser does not seem to recognize it. Yet the app itself does show the status of the Secondary Filter (Holiday, Light or Heavy) so it must be read and parsed somewhere.
+
+"SystemInfo"            => payload1 = 2, payload2 = 0 ==> returns 7e080abf1c000a0a867e (Type 0x1C = Secondary Filter)
+"FilterCycles"          => payload1 = 1, payload2 = 0 ==> returns 7e080abf1b110104907e (Type 0x1B same as Primary Filtration)
+"SetupParameters"       => payload1 = 4, payload2 = 0 ==> returns 7e070abf1e18016e7e (Type 0x1E Unrecognized by Prolink app)
+"DeviceConfiguration"   => payload1 = 0, payload2 = 1 ==> returns nothing 
+"PrimaryFiltration"     => payload1 = 1, payload2 = 0 ==> returns 7e080abf1b110104907e (Type 0x1B same as FilterCycles)
+"PupmpState"            => payload1 = 16, payload2 = 0 ==> returns 7e120abf1dffffffff020618061100e9040b377e (Type 0x1D Pump State)
+
+Send Primary Filtration Message Type (see WifiCommunicator.SendPrimaryFiltration() )
+------------------------------------
+
+Even though it is named "Send Primary Filtration" this message is also received by the app in response to it sending the spa a Panel Request message of either the "Filter Cycles" or "Primary Filtration" types. There is however a slight difference in the received message -- it has an extra byte after param2 (number of cycles per day?). See the Primaryfiltration message type (0x1B) above.
+
+It is possible to send a longer version of this message type which includes that extra byte as a 3rd parameter. And it appears that the spa controller tends to drop the connection if this 3rd parameter byte is NOT present.  With that 3rd byte the "Send" message packet becomes exactly the same as the status packet returned by the spa in response to sending it a Filter Cycles panel request message.
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x07 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x1B = 27 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = Param1
+Byte 6 = Param2
+Byte 7 = Checksum over bytes 1 through 6 (see utlity.CalculateChecksum())
+Byte 8 = 0x7E = message end flag
+
+Param1: start time (hour of day in 24 hr time?)
+Param2: duration in hours
+
+Set 24 hour Time Message Type 
+-----------------------------
+
+This routine is stubbed out in the Prolink app.
+
+In balboa.py the timescale is controlled by bit 7 of the hours byte of a Set Time command.  So perhaps also in Jacuzzi spas you can switch to displaying in 24hr time by sending a Set Time command with bit 7 of the hour byte set TRUE.
+
+1/6/23 Tried to change the time format by setting bit 7 of the hours byte in a Set Time command. The spa controller did accept the command and
+did change the time, but did NOT change the time format to 12 hour (byte 18 of the Status Update message remains at 0x02)
+
+Set Target Temperature Message Type (see WifiCommunicator.SetTargetTemperature() )
+-----------------------------------
+
+This looks to be identical to a BMTS_SET_TEMP message in balboa.py
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x20 = 32 (BMTS_SET_TEMP = 0x20)
+Byte 5 = Target Temp 
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Target Temp is the temperature setpoint when scale is Fahrenheit. If Celsius then the byte value you send should be 2x the actual temp setpoint, so as to preserve the 0.5 degree C resolution. The spa controller then divides the value you send by 2
+
+Set Temperature Scale Message Type  (see WifiCommunicator.SetTemperatureScale() )
+----------------------------------
+
+This appears to be identical to the BMTS_SET_TSCALE message in balboa.py, except for the type code of 0x17 instead 0f 0x27
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x06 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x17 = 23 (BMTS_SET_TSCALE = 0x27)
+Byte 5 = Scale code (see below)
+Byte 6 = Checksum over bytes 1 through 5 (see utlity.CalculateChecksum())
+Byte 7 = 0x7E = message end flag
+
+Scale codes:
+
+Celsius = 0x28 = 40
+Fahrenheit = 0x29 = 41
+
+Set Time Message Type  (see WifiCommunicator.SetTime() )
+--------------------
+
+In balboa.py the timescale is controlled by bit 7 of the hours byte of a Set Time command.  So perhaps also in Jacuzzi spas you can switch to displaying in 24hr time by sending a Set Time command with bit 7 of the hour byte set TRUE.
+
+However, also note that in balboa.py the BMTS_SET_TIME message does not include the month, day, and year bytes.
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0A = 10 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x18 = 24 (BMTS_SET_TIME = 0x21)
+Byte 5 = Month code (see below)
+Byte 6 = Day
+Byte 7 = Year (since 2000?)
+Byte 8 = Hour24Hours
+Byte 9 = Minute
+Byte 10 = Checksum over bytes 1 through 9 (see utlity.CalculateChecksum())
+Byte 11 = 0x7E = message end flag
+
+Month code values: (these depend on the value of Param4 (Month) of SetTime()  )
+1 => -15 = 0xF1
+2 => -14 = 0xF2
+3 => -13 = 0xF3
+4 => -13 = 0xF3 (note duplicate code value -- a bug??)
+5 => -12 = 0xF4
+6 => -11 = 0xF5
+7 => -10 = 0xF6
+8 => -9 = 0xF7
+9 => -8 = 0xF8
+10 => -7 = 0xF9
+11 => -5 = 0xFB (note skipped code value -- a bug??)
+12 => -4 = 0xFC
+
+It appears that the current month value can be converted to a month code by a simple bitwise OR with 0xF0.
+The Jacuzzi spa controller will ignore any Set Time message where those upper 4 bits are not set to 1.
+
+Snozze ClearRay Message Type  (see WifiCommunicator.SnozzeClearRay() )
+----------------------------
+
+("Snozze" probably actually means "snooze")
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x01 = 1
+Byte 6 = 0x00 = 0
+Byte 7 = 0x0A = 10
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Snozze ProClarity Message Type  (see WifiCommunicator.SnozzeProClarity() )
+------------------------------
+
+("Snozze" probably actually means "snooze")
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x10 = 16
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0x0A = 10
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Snozze ProClarity Depth Message Type  (see WifiCommunicator.SnozzeProClarityDepth() )
+------------------------------------
+
+("Snozze" probably actually means "snooze")
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x40 = 64
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x00 = 0
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x0A = 10
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+
+Snozze Water Message Type  (see WifiCommunicator.SnozzeWater() )
+-------------------------
+
+("Snozze" probably actually means "snooze")
+
+This uses the same type code (0x22 = 34) as Reset ClearRay
+
+Byte 0 = 0x7E ('~') = message start flag
+Byte 1 = 0x0E = 14 = message length (not including start and end flag bytes)
+Byte 2 = 0x0A = "Address" byte (always either 0x0A or 0xFF = broadcast?)
+Byte 3 = 0xBF = "PF" byte (always either 0xAF or 0xBF)
+Byte 4 = 0x22 = 34 (BMTS_FILTER_REQ = 0x22)
+Byte 5 = 0x04 = 4
+Byte 6 = 0x00 = 0
+Byte 7 = 0x00 = 0
+Byte 8 = 0x00 = 0
+Byte 9 = 0x0A = 10
+Byte 10 = 0x00 = 0
+Byte 11 = 0x00 = 0
+Byte 12 = 0x00 = 0
+Byte 13 = 0x00 = 0
+Byte 14 = Checksum over bytes 1 through 13 (see utlity.CalculateChecksum())
+Byte 15 = 0x7E = message end flag
+

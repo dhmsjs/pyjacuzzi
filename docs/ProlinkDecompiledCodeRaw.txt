@@ -1,0 +1,2937 @@
+From decompile of Prolink App:
+------------------------------
+
+public enum PacketType {
+  ConnectionEstablished,                  // Only sent to parent of listener thread?
+  DeviceConfiguration,                    // 3rd byte = 0x2E (same as Balboa)
+  FilterCycleInfo,                        // 3rd byte = 0x27 (BMTS_FILTER_INFO_RESP = 0x23)
+  ModuleIdentification,                   // 3rd byte = 0x9C (BMTS_MOD_IDENT_RESP = 0x94)
+  PanelUpdate(1),                         // 3rd byte = 0x16 (BMTS_PANEL_REQ = 0x22)
+  Primaryfiltration(1),                   // 3rd byte = 0x1B (BMTS_FILTER_REQ =0x22 -- note duplicate!)
+  Pupmpstateparsing(1),                   // 3rd byte = 0x1D 
+  SetupParameters(1),                     // 3rd byte = 0x25 (same as Balboa)
+  SystemInformation(1),                   // 3rd byte = 0x24 (same as Balboa)
+  Unknown(1);                             // 3rd byte = anything else
+  
+  public int id;
+  
+  static {
+    DeviceConfiguration = new PacketType("DeviceConfiguration", 1, 2);
+    SetupParameters = new PacketType("SetupParameters", 2, 3);
+    SystemInformation = new PacketType("SystemInformation", 3, 4);
+    Unknown = new PacketType("Unknown", 4, 5);
+    FilterCycleInfo = new PacketType("FilterCycleInfo", 5, 6);
+    ModuleIdentification = new PacketType("ModuleIdentification", 6, 7);
+    ConnectionEstablished = new PacketType("ConnectionEstablished", 7, 8);
+    Primaryfiltration = new PacketType("Primaryfiltration", 8, 9);
+    Pupmpstateparsing = new PacketType("Pupmpstateparsing", 9, 10);
+    $VALUES = new PacketType[] { PanelUpdate, DeviceConfiguration, SetupParameters, SystemInformation, Unknown, FilterCycleInfo, ModuleIdentification, ConnectionEstablished, Primaryfiltration, Pupmpstateparsing };
+  }
+  
+  PacketType(int paramInt1) {
+    this.id = paramInt1;
+  }
+}
+
+----
+
+public class PacketParser {
+  public static SpaDeviceConfiguration ParseDeviceConfiguration(byte[] paramArrayOfbyte) {
+    SpaDeviceConfiguration spaDeviceConfiguration = new SpaDeviceConfiguration();
+    byte b1 = paramArrayOfbyte[8];
+    if ((b1 & 0x80) != 0)
+      spaDeviceConfiguration.HasPump0 = true; 
+    byte b2 = paramArrayOfbyte[5];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump1 = true; 
+    if ((b2 & 0xC) != 0)
+      spaDeviceConfiguration.HasPump2 = true; 
+    if ((b2 & 0x30) != 0)
+      spaDeviceConfiguration.HasPump3 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump4 = true; 
+    b2 = paramArrayOfbyte[6];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump5 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump6 = true; 
+    b2 = paramArrayOfbyte[7];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasLight1 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasLight2 = true; 
+    b2 = paramArrayOfbyte[9];
+    if ((b2 & 0x1) != 0)
+      spaDeviceConfiguration.HasAux1 = true; 
+    if ((b2 & 0x2) != 0)
+      spaDeviceConfiguration.HasAux1 = true; 
+    if ((b1 & 0x3) != 0)
+      spaDeviceConfiguration.HasBlower = true; 
+    if ((b2 & 0x10) != 0)
+      spaDeviceConfiguration.HasMister = true; 
+    return spaDeviceConfiguration;
+  }
+  
+  public static FilterCycle ParseFilterCycle(byte[] paramArrayOfbyte) {
+    boolean bool;
+    FilterCycle filterCycle = new FilterCycle();
+    filterCycle.FilterCycle1StartsAtHour = paramArrayOfbyte[5];
+    filterCycle.FilterCycle1StartsAtMinute = paramArrayOfbyte[6];
+    filterCycle.FilterCycle1DurationHour = paramArrayOfbyte[7];
+    filterCycle.FilterCycle1DurationMinute = paramArrayOfbyte[8];
+    byte b = paramArrayOfbyte[9];
+    filterCycle.FilterCycle2StartsAtHour = b & Byte.MAX_VALUE;
+    if ((b & 0x80) > 0) {
+      bool = true;
+    } else {
+      bool = false;
+    } 
+    filterCycle.FilterCycle2Enabled = bool;
+    filterCycle.FilterCycle2StartsAtMinute = paramArrayOfbyte[10];
+    filterCycle.FilterCycle2DurationHour = paramArrayOfbyte[11];
+    filterCycle.FilterCycle2DurationMinute = paramArrayOfbyte[12];
+    return filterCycle;
+  }
+  
+  public static SpaModuleIdentification ParseModuleIdentication(byte[] paramArrayOfbyte) {
+    SpaModuleIdentification spaModuleIdentification = new SpaModuleIdentification();
+    System.arraycopy(paramArrayOfbyte, 14, spaModuleIdentification.iDigiDeviceID, 0, 16);
+    return spaModuleIdentification;
+  }
+  
+  public static SpaControlState ParsePanelUpdate(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      if (paramArrayOfbyte.length < 15)
+        return null; 
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[5];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[6];
+      byte b = paramArrayOfbyte[14];
+      String str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[7] & 0xFF) }).replace(' ', '0');
+      int i = Integer.parseInt(str1.substring(0, 3), 2);
+      int j = Integer.parseInt(str1.substring(3, str1.length()), 2);
+      SpaControlState.currentweek = i;
+      SpaControlState.currentdaysinmonth = j;
+      SpaControlState.currentmonth = paramArrayOfbyte[8];
+      SpaControlState.currentyear = paramArrayOfbyte[9] + 2000;
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[10] & 0xFF) }).replace(' ', '0');
+      int k = Integer.parseInt(str1.substring(0, 2), 2);
+      j = Integer.parseInt(str1.substring(2, 4), 2);
+      i = Integer.parseInt(str1.substring(4, str1.length()), 2);
+      SpaControlState.Filter2Mode = k;
+      SpaControlState.HeatModeState = j;
+      SpaControlState.Spastate = i;
+      if (SpaControlState.Spastate == 1 || SpaControlState.Spastate == 2 || SpaControlState.Spastate == 8 || SpaControlState.Spastate == 9 || SpaControlState.Spastate == 10)
+        SpaControlState.Spastate = -1; 
+      if (TabActivityClass.modalval == 1 && paramArrayOfbyte[11] == 21) {
+        SpaControlState.ErrorCode = 0;
+      } else {
+        SpaControlState.ErrorCode = paramArrayOfbyte[11];
+      } 
+      if (SpaControlState.ErrorCode == 4 || SpaControlState.ErrorCode == 5 || SpaControlState.ErrorCode == 6 || SpaControlState.ErrorCode == 7 || SpaControlState.ErrorCode == 8 || SpaControlState.ErrorCode == 9 || SpaControlState.ErrorCode == 10 || SpaControlState.ErrorCode == 14)
+        SpaControlState.ErrorCode = -1; 
+      i = paramArrayOfbyte[8];
+      SpaControlState.ActualTemperature = paramArrayOfbyte[12];
+      SpaControlState.SetTemperature = paramArrayOfbyte[14];
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[15] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 2), 2);
+      k = Integer.parseInt(str1.substring(1, 3), 2);
+      j = Integer.parseInt(str1.substring(3, 6), 2);
+      Integer.parseInt(str1.substring(5, str1.length()), 2);
+      if (i == 0) {
+        SpaControlState.Pump3State = PumpState.Off;
+      } else if (i == 1) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else {
+        SpaControlState.Pump3State = PumpState.High;
+      } 
+      if (k == 0) {
+        SpaControlState.Pump2State = PumpState.Off;
+      } else if (k == 1) {
+        SpaControlState.Pump2State = PumpState.Low;
+      } else {
+        SpaControlState.Pump2State = PumpState.High;
+      } 
+      if (j == 0) {
+        SpaControlState.Pump1State = PumpState.Off;
+      } else if (j == 1) {
+        SpaControlState.Pump1State = PumpState.Low;
+      } else {
+        SpaControlState.Pump1State = PumpState.High;
+      } 
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[16] & 0xFF) }).replace(' ', '0');
+      String str2 = str1.substring(1, 3);
+      String str3 = str1.substring(2, 4);
+      String str4 = str1.substring(3, 5);
+      String str5 = str1.substring(5, 7);
+      int m = Integer.parseInt(str2, 2);
+      i = Integer.parseInt(str3, 2);
+      j = Integer.parseInt(str4, 2);
+      k = Integer.parseInt(str5, 2);
+      SpaControlState.IsSecondaryON = m;
+      SpaControlState.IsPrimayON = i;
+      SpaControlState.IsBlowerON = j;
+      SpaControlState.IsUVON = k;
+      str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[18] & 0xFF) }).replace(' ', '0');
+      str5 = str2.substring(5, 7);
+      str2.substring(6, str2.length());
+      str2 = str2.substring(7, str2.length());
+      if (Integer.parseInt(str5, 2) == 0) {
+        SpaControlState.Is24HourTime = false;
+      } else {
+        SpaControlState.Is24HourTime = true;
+      } 
+      if (Integer.parseInt(str2) == 0) {
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+      SpaControlState.IsSecondaryON = m;
+      SpaControlState.IsPrimayON = i;
+      str3 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[20] & 0xFF) }).replace(' ', '0');
+      str5 = str3.substring(4, 6);
+      str2 = str3.substring(5, 7);
+      str3 = str3.substring(6, str3.length());
+      SpaControlState.settingLock = Integer.parseInt(str5, 2);
+      SpaControlState.accessLock = Integer.parseInt(str2, 2);
+      SpaControlState.maintenanceLock = Integer.parseInt(str3, 2);
+      SpaControlState.CLEARRAYLSB = paramArrayOfbyte[24];
+      if (SpaControlState.CLEARRAYLSB < 0)
+        SpaControlState.CLEARRAYLSB += 256; 
+      SpaControlState.CLEARRAYMSB = paramArrayOfbyte[25];
+      if (SpaControlState.CLEARRAYMSB < 0)
+        SpaControlState.CLEARRAYMSB += 256; 
+      if (SpaControlState.CLEARRAYLSB >= 0 && SpaControlState.CLEARRAYMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.CLEARRAYLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      SpaControlState.WATERLSB = paramArrayOfbyte[26];
+      if (SpaControlState.WATERLSB < 0)
+        SpaControlState.WATERLSB += 256; 
+      SpaControlState.WATERMSB = paramArrayOfbyte[27];
+      if (SpaControlState.WATERMSB < 0)
+        SpaControlState.WATERMSB += 256; 
+      if (SpaControlState.WATERLSB >= 0 && SpaControlState.WATERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.WATERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 29)
+        return spaControlState; 
+      SpaControlState.OUTERFILTERLSB = paramArrayOfbyte[28];
+      if (SpaControlState.OUTERFILTERLSB < 0)
+        SpaControlState.OUTERFILTERLSB += 256; 
+      SpaControlState.OUTERFILTERMSB = paramArrayOfbyte[29];
+      if (SpaControlState.OUTERFILTERMSB < 0)
+        SpaControlState.OUTERFILTERMSB += 256; 
+      if (SpaControlState.OUTERFILTERLSB >= 0 && SpaControlState.OUTERFILTERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERLSB) }).replace(' ', '0');
+        str5 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str5);
+        SpaControlState.OUTERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 31)
+        return spaControlState; 
+      SpaControlState.INNERFILTERLSB = paramArrayOfbyte[30];
+      if (SpaControlState.INNERFILTERLSB < 0)
+        SpaControlState.INNERFILTERLSB += 256; 
+      SpaControlState.INNERFILTERMSB = paramArrayOfbyte[31];
+      if (SpaControlState.INNERFILTERMSB < 0)
+        SpaControlState.INNERFILTERMSB += 256; 
+      if (SpaControlState.INNERFILTERLSB >= 0 && SpaControlState.INNERFILTERMSB >= 0) {
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERLSB) }).replace(' ', '0');
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str2);
+        stringBuilder.append(str3);
+        SpaControlState.INNERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 33)
+        return spaControlState; 
+      String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[32] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 4), 2);
+      if (i == 0) {
+        SpaControlState.WifiState = SpaWifiState.Unknown;
+      } else if (i == 1) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeUnavailable;
+      } else if (i == 2) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeAvailable;
+      } else if (i == 3) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureMode;
+      } else if (i == 4) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud;
+      } else if (i == 5) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkCloud;
+      } else if (i == 14) {
+        SpaControlState.WifiState = SpaWifiState.LINKINGTONETWORK;
+      } else if (i == 15) {
+        SpaControlState.WifiState = SpaWifiState.NOTCOMMUNICATINGTOSPA;
+      } 
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaControlState ParsePanelUpdatee(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      float f;
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[8];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[9];
+      byte b1 = paramArrayOfbyte[14];
+      if ((b1 & 0x1) == 0) {
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+      byte b2 = paramArrayOfbyte[7];
+      if (b2 == 255) {
+        SpaControlState.ActualTemperature = b2;
+      } else {
+        if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+          f = b2;
+        } else {
+          f = b2 / 2.0F;
+        } 
+        SpaControlState.ActualTemperature = f;
+      } 
+      b2 = paramArrayOfbyte[25];
+      if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+        f = b2;
+      } else {
+        f = b2 / 2.0F;
+      } 
+      SpaControlState.TargetTemperature = f;
+      int i = b1 & 0xC;
+      if (i == 0) {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } else if (i == 4) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1;
+      } else if (i == 12) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1_2;
+      } else if (i == 8) {
+        SpaControlState.FilterMode = FilterMode.FILTER_2;
+      } else {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } 
+      i = paramArrayOfbyte[15];
+      if ((i & 0x4) == 4) {
+        SpaControlState.TemperateRange = TemperatureRange.High;
+      } else {
+        SpaControlState.TemperateRange = TemperatureRange.Low;
+      } 
+      b2 = paramArrayOfbyte[19];
+      if ((b2 & 0x3) == 0) {
+        SpaControlState.Light1On = false;
+      } else {
+        SpaControlState.Light1On = true;
+      } 
+      if ((b2 & 0xC) == 0) {
+        SpaControlState.Light2On = false;
+      } else {
+        SpaControlState.Light2On = true;
+      } 
+      b2 = paramArrayOfbyte[10];
+      if (b2 == 0) {
+        SpaControlState.HeatMode = HeatMode.Ready;
+      } else if (b2 == 1) {
+        SpaControlState.HeatMode = HeatMode.Rest;
+      } else if (b2 == 2) {
+        SpaControlState.HeatMode = HeatMode.ReadyInRest;
+      } else {
+        SpaControlState.HeatMode = HeatMode.None;
+      } 
+      i &= 0x30;
+      b2 = paramArrayOfbyte[16];
+      int j = b2 & 0x3;
+      if (j == 1) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.LowHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.Low;
+        } 
+      } else if (j == 2) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.HighHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.High;
+        } 
+      } else {
+        SpaControlState.Pump1State = PumpState.Off;
+      } 
+      j = b2 & 0xC;
+      if (j == 4) {
+        SpaControlState.Pump2State = PumpState.Low;
+      } else if (j == 8) {
+        SpaControlState.Pump2State = PumpState.High;
+      } else {
+        SpaControlState.Pump2State = PumpState.Off;
+      } 
+      j = b2 & 0x30;
+      if (j == 16) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else if (j == 32) {
+        SpaControlState.Pump3State = PumpState.High;
+      } else {
+        SpaControlState.Pump3State = PumpState.Off;
+      } 
+      j = b2 & 0xC0;
+      if (j == 64) {
+        SpaControlState.Pump4State = PumpState.Low;
+      } else if (j == 128) {
+        SpaControlState.Pump4State = PumpState.High;
+      } else {
+        SpaControlState.Pump4State = PumpState.Off;
+      } 
+      j = paramArrayOfbyte[17];
+      int k = j & 0x3;
+      if (k == 1) {
+        SpaControlState.Pump5State = PumpState.Low;
+      } else if (k == 2) {
+        SpaControlState.Pump5State = PumpState.High;
+      } else {
+        SpaControlState.Pump5State = PumpState.Off;
+      } 
+      k = j & 0xC;
+      if (k == 4) {
+        spaControlState.Pump6State = PumpState.Low;
+      } else if (k == 8) {
+        spaControlState.Pump6State = PumpState.High;
+      } else {
+        spaControlState.Pump6State = PumpState.Off;
+      } 
+      k = paramArrayOfbyte[18];
+      int m = k & 0xC;
+      if (m == 4) {
+        SpaControlState.BlowerState = BlowerState.Low;
+      } else if (m == 8) {
+        SpaControlState.BlowerState = BlowerState.Medium;
+      } else if (m == 12) {
+        SpaControlState.BlowerState = BlowerState.High;
+      } else {
+        SpaControlState.BlowerState = BlowerState.Off;
+      } 
+      m = paramArrayOfbyte[20];
+      if ((m & 0x1) == 0) {
+        SpaControlState.MisterOn = false;
+      } else {
+        SpaControlState.MisterOn = true;
+      } 
+      if ((m & 0x8) == 0) {
+        SpaControlState.Aux1On = false;
+      } else {
+        SpaControlState.Aux1On = true;
+      } 
+      if ((m & 0x10) == 0) {
+        SpaControlState.Aux2On = false;
+      } else {
+        SpaControlState.Aux2On = true;
+      } 
+      if (b2 >= 1 || j >= 1 || (k & 0x3) >= 1) {
+        if (i == 0) {
+          spaControlState.PumpStateStatus = PumpState.Low;
+        } else {
+          spaControlState.PumpStateStatus = PumpState.LowHeat;
+        } 
+      } else {
+        spaControlState.PumpStateStatus = PumpState.Off;
+      } 
+      i = paramArrayOfbyte[27];
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaSystemInformation ParseSystemInformation(byte[] paramArrayOfbyte) {
+    SpaSystemInformation spaSystemInformation = new SpaSystemInformation();
+    spaSystemInformation.isOldVersion = false;
+    if (paramArrayOfbyte[7] < 6)
+      spaSystemInformation.isOldVersion = true; 
+    return spaSystemInformation;
+  }
+  
+  public static SpaControlState PrimaryFiltration(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      byte b1 = paramArrayOfbyte[5];
+      byte b2 = paramArrayOfbyte[6];
+      if (b1 >= 0)
+        SpaControlState.StartTimeHour = b1; 
+      if (b2 >= 0)
+        SpaControlState.EndTimeHour = b2; 
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaControlState Pupmpstateparsing(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      int i = 1;
+      String str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[11] & 0xFF) }).replace(' ', '0');
+      String str1 = str2.substring(0, 2);
+      String str3 = str2.substring(2, 4);
+      str2 = str2.substring(4, 6);
+      if (str1.equals("00"))
+        i = 0; 
+      int j = i;
+      if (!str3.equals("00"))
+        j = i + 1; 
+      i = j;
+      if (!str2.equals("00"))
+        i = j + 1; 
+      SpaControlState.NumberofPump = i;
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Number of pumps = ");
+      stringBuilder.append(SpaControlState.NumberofPump);
+      Log.i("SPA_CONTROL_STATE", stringBuilder.toString());
+    } 
+    return spaControlState;
+  }
+}
+
+----
+
+public enum PanelRequestType {
+  DeviceConfiguration, FilterCycles, PrimaryFiltration, PupmpState, SetupParameters, SystemInfo;
+  
+  static {
+    FilterCycles = new PanelRequestType("FilterCycles", 1);
+    SetupParameters = new PanelRequestType("SetupParameters", 2);
+    DeviceConfiguration = new PanelRequestType("DeviceConfiguration", 3);
+    PrimaryFiltration = new PanelRequestType("PrimaryFiltration", 4);
+    PupmpState = new PanelRequestType("PupmpState", 5);
+    $VALUES = new PanelRequestType[] { SystemInfo, FilterCycles, SetupParameters, DeviceConfiguration, PrimaryFiltration, PupmpState };
+  }
+}
+
+----
+
+public class SocketListenerThread extends Thread {
+  private static final String TAG = "SocketListener";
+  
+  public static WifiSocketState currentState;
+  
+  public static Boolean isPacketget = Boolean.valueOf(false);
+  
+  private int DISCOVERY_PORT = 30303;
+  
+  private String HOST_IP;
+  
+  private String HOST_IP_ADHOC;
+  
+  private String HOST_IP_SOFT_AP;
+  
+  private String HOST_NAME = "JHTSpa.local";
+  
+  private int MAIN_PORT = 4257;
+  
+  public Socket clientSocket;
+  
+  private final Context context;
+  
+  private boolean foundAddress;
+  
+  public Boolean hasConnectionBeenEstablished = Boolean.valueOf(false);
+  
+  public DataInputStream inToServer;
+  
+  private byte[] inputBuffer;
+  
+  ByteArrayList inputBufferList = new ByteArrayList();
+  
+  public Boolean isConnecting = Boolean.valueOf(false);
+  
+  public Boolean isInitialized = Boolean.valueOf(false);
+  
+  private boolean isOutputPending;
+  
+  private JmDNS jmdns = null;
+  
+  private ServiceListener listener = null;
+  
+  WifiManager.MulticastLock lock;
+  
+  private Handler myThreadHandler;
+  
+  public DataOutputStream outToServer;
+  
+  private byte[] outputBuffer;
+  
+  private int outputCommandLength = 0;
+  
+  private Handler parentHandler;
+  
+  private ServiceInfo serviceInfo;
+  
+  private String serviceName = "DemoWebServer";
+  
+  public volatile boolean stopped;
+  
+  private String type = "_http._tcp.local.";
+  
+  public SocketListenerThread(Handler paramHandler, Context paramContext) {
+    this.parentHandler = paramHandler;
+    this.context = paramContext;
+    currentState = WifiSocketState.NotConnected;
+    Log.i("SocketListener", "Creating Socket Listener");
+  }
+  
+  private void ConnectSocket(String paramString) {
+    if (!this.stopped) {
+      if (this.clientSocket != null && this.clientSocket.isConnected())
+        return; 
+      try {
+        StringBuilder stringBuilder = new StringBuilder();
+        this();
+        stringBuilder.append("Trying to connect to ");
+        stringBuilder.append(paramString);
+        Log.i("SocketListener", stringBuilder.toString());
+        this.isConnecting = Boolean.valueOf(true);
+        if (paramString != null) {
+          if (!checkConnectedToSpa()) {
+            this.clientSocket = null;
+            Socket socket1 = new Socket();
+            this();
+            this.clientSocket = socket1;
+            Socket socket2 = this.clientSocket;
+            InetSocketAddress inetSocketAddress = new InetSocketAddress();
+            this(paramString, this.MAIN_PORT);
+            socket2.connect(inetSocketAddress, 4257);
+          } else {
+            this.clientSocket = null;
+            Socket socket = new Socket();
+            this();
+            this.clientSocket = socket;
+            socket = this.clientSocket;
+            InetSocketAddress inetSocketAddress = new InetSocketAddress();
+            this(paramString, this.MAIN_PORT);
+            socket.connect(inetSocketAddress, 4257);
+          } 
+          try {
+            DataOutputStream dataOutputStream = new DataOutputStream();
+            this(this.clientSocket.getOutputStream());
+            this.outToServer = dataOutputStream;
+            DataInputStream dataInputStream = new DataInputStream();
+            this(this.clientSocket.getInputStream());
+            this.inToServer = dataInputStream;
+            Log.i("SocketListener", "Socket created, Streams assigned");
+          } catch (IOException iOException) {
+            Log.e("SocketListener", "Cannot assign Streams, Socket not connected");
+            iOException.printStackTrace();
+          } 
+        } 
+        this.isConnecting = Boolean.valueOf(false);
+      } catch (Exception exception) {
+        StringBuilder stringBuilder = new StringBuilder();
+        this();
+        stringBuilder.append("Error creating socket ");
+        stringBuilder.append(exception.toString());
+        Log.e("SocketListener", stringBuilder.toString());
+        this.isConnecting = Boolean.valueOf(false);
+        this.isConnecting = Boolean.valueOf(false);
+      } finally {}
+      Log.i("SocketListener", "In try statement");
+      if (this.clientSocket != null) {
+        Log.i("SocketListener", "Socket is not null");
+        if (this.clientSocket.isConnected()) {
+          currentState = WifiSocketState.Connected;
+          this.isInitialized = Boolean.valueOf(true);
+          ConnectingSpa.IP = paramString;
+          LoginScreen.IP = paramString;
+          Log.i("SocketListener", "Socket is connected");
+        } else {
+          Log.e("SocketListener", "Cannot assign Streams, Socket is closed");
+        } 
+      } else {
+        Log.e("SocketListener", "Socket is null");
+      } 
+    } 
+  }
+  
+  private void LookupIPByDNS() {
+    this.foundAddress = false;
+    try {
+      setUp();
+      String str = "";
+      if (!this.foundAddress) {
+        InetAddress[] arrayOfInetAddress = InetAddress.getAllByName(this.HOST_NAME);
+        if (arrayOfInetAddress.length > 0)
+          str = arrayOfInetAddress[0].getHostAddress(); 
+        if (str != null && str != "" && !str.startsWith("0.")) {
+          this.foundAddress = true;
+          this.HOST_IP = str;
+        } 
+      } 
+    } catch (Exception exception) {
+      Log.e("Balboa", "Exception looking up IP from name", exception);
+      Log.i("Balboa", "Cannot lookup host from name");
+    } 
+  }
+  
+  private void LookupIPByNETBIOS() {
+    try {
+      String str = NbtAddress.getByName(this.HOST_NAME).getInetAddress().getHostAddress();
+      if (str != "" && str != null && !str.startsWith("0."))
+        this.HOST_IP = str; 
+    } catch (Exception exception) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("NETBIOS: Exception looking up IP from NbtAddress");
+      stringBuilder.append(exception.toString());
+      Log.e("SocketListener", stringBuilder.toString());
+      Log.i("SocketListener", "NETBIOS: Cannot lookup host from name");
+    } 
+  }
+  
+  private void LookupIPByUDPBroadcast() {
+    if (this.clientSocket != null && this.clientSocket.isConnected())
+      return; 
+    try {
+      Log.i("SocketListener", "Looking up IP from UDP broadcast");
+      ((WifiManager)this.context.getSystemService("wifi")).createMulticastLock("dk.aboaya.pingpong").acquire();
+      DatagramSocket datagramSocket = new DatagramSocket();
+      this((SocketAddress)null);
+      datagramSocket.setReuseAddress(true);
+      datagramSocket.setBroadcast(true);
+      InetSocketAddress inetSocketAddress = new InetSocketAddress();
+      this(30300);
+      datagramSocket.bind(inetSocketAddress);
+      datagramSocket.setSoTimeout(10000);
+      DatagramPacket datagramPacket2 = new DatagramPacket();
+      this("Discovery: Who is out there?".getBytes(), "Discovery: Who is out there?".length(), getBroadcastAddress(), this.DISCOVERY_PORT);
+      byte[] arrayOfByte = new byte[4096];
+      DatagramPacket datagramPacket1 = new DatagramPacket();
+      this(arrayOfByte, arrayOfByte.length);
+      datagramSocket.send(datagramPacket2);
+      long l = System.currentTimeMillis();
+      if (System.currentTimeMillis() - l < 10000L) {
+        Log.i("SocketListener", "In the Loop");
+        try {
+          datagramSocket.receive(datagramPacket1);
+          String str = wifiIpAddress(this.context);
+          if (!str.equalsIgnoreCase(datagramPacket1.getAddress().getHostAddress())) {
+            this.HOST_IP = datagramPacket1.getAddress().getHostAddress();
+            this.foundAddress = true;
+            ConnectSocket(this.HOST_IP);
+            StringBuilder stringBuilder3 = new StringBuilder();
+            this();
+            stringBuilder3.append("MyIP is ");
+            stringBuilder3.append(str);
+            Log.i("SocketListener", stringBuilder3.toString());
+            StringBuilder stringBuilder2 = new StringBuilder();
+            this();
+            stringBuilder2.append("Found IP: ");
+            stringBuilder2.append(this.HOST_IP);
+            Log.i("SocketListener", stringBuilder2.toString());
+            String str1 = new String();
+            this(datagramPacket1.getData(), "UTF-8");
+            StringBuilder stringBuilder1 = new StringBuilder();
+            this();
+            stringBuilder1.append("Pakcket Data: ");
+            stringBuilder1.append(str1);
+            Log.i("SocketListener", stringBuilder1.toString());
+            SpaController.SaveDigiDeviceIdentifier(str1, this.context);
+          } else {
+            Log.i("SocketListener", "Found my own IP");
+          } 
+        } catch (SocketTimeoutException socketTimeoutException) {
+          StringBuilder stringBuilder1 = new StringBuilder();
+          this();
+          stringBuilder1.append("Timeout Exception: ");
+          stringBuilder1.append(socketTimeoutException.toString());
+          Log.e("SocketListener", stringBuilder1.toString());
+        } 
+      } 
+      datagramSocket.close();
+      StringBuilder stringBuilder = new StringBuilder();
+      this();
+      stringBuilder.append("Found IP Address from UDP Broadcast: ");
+      stringBuilder.append(this.HOST_IP);
+      Log.i("SocketListener", stringBuilder.toString());
+    } catch (Exception exception) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("UDP: Cannot lookup host from name: ");
+      stringBuilder.append(exception.toString());
+      Log.e("SocketListener", stringBuilder.toString());
+    } 
+  }
+  
+  private void SendNetworkPacket(byte[] paramArrayOfbyte) {
+    if (!this.isInitialized.booleanValue())
+      initializeSocket(); 
+    try {
+      StringBuilder stringBuilder = new StringBuilder();
+      this();
+      stringBuilder.append("output stream length before------------------------------ ");
+      stringBuilder.append(this.outToServer.size());
+      Log.i("SocketListener", stringBuilder.toString());
+      this.outToServer.write(paramArrayOfbyte, 0, this.outputCommandLength);
+      this.outToServer.flush();
+    } catch (IOException iOException) {
+      Log.i("SocketListener", "Cannot send data");
+    } 
+  }
+  
+  private boolean checkAddress(byte[] paramArrayOfbyte) {
+    if (paramArrayOfbyte.length < 4)
+      return false; 
+    byte b = paramArrayOfbyte[2];
+    return !(b != 10 && b != -1);
+  }
+  
+  private boolean checkChecksum(byte[] paramArrayOfbyte) {
+    return true;
+  }
+  
+  private boolean checkConnectedToSpa() {
+    String str = ((WifiManager)this.context.getSystemService("wifi")).getConnectionInfo().getSSID();
+    return (str.toUpperCase().contains("JHTSPA") || str.toUpperCase().contains("SDSSPA"));
+  }
+  
+  private boolean checkForIncomingData() {
+    boolean bool3;
+    boolean bool1 = true;
+    boolean bool2 = true;
+    try {
+      if (this.inputBufferList.length() > 256)
+        this.inputBufferList.removeAll(); 
+      int i = this.inToServer.read(this.inputBuffer);
+      if (i > 0) {
+        this.inputBufferList.add(this.inputBuffer, 0, i);
+        try {
+          if (!this.hasConnectionBeenEstablished.booleanValue()) {
+            this.hasConnectionBeenEstablished = Boolean.valueOf(true);
+            sendMessageToParent(PacketType.ConnectionEstablished, null, 0);
+          } 
+          byte[] arrayOfByte = this.inputBufferList.getArray();
+          i = 0;
+          byte b = -1;
+          int j = -2;
+          while (true) {
+            bool3 = bool1;
+            if (i < arrayOfByte.length) {
+              byte b2;
+              int k;
+              byte b1 = arrayOfByte[i];
+              if (b == -1 && b1 == 126) {
+                b2 = i;
+                k = -1;
+              } else {
+                b2 = b;
+                k = j;
+                if (j == -1) {
+                  b2 = b;
+                  k = j;
+                  if (b1 == 126) {
+                    k = i - b + 1;
+                    byte[] arrayOfByte1 = new byte[k];
+                    System.arraycopy(arrayOfByte, b, arrayOfByte1, 0, k);
+                    if (checkHeaderAndFooter(arrayOfByte1) && checkAddress(arrayOfByte1) && checkPF(arrayOfByte1) && checkChecksum(arrayOfByte1)) {
+                      SpaControlState spaControlState;
+                      PacketType packetType = getPacketType(arrayOfByte1);
+                      this.inputBufferList.remove(0, i);
+                      switch (packetType) {
+                        case Pupmpstateparsing:
+                          PacketParser.Pupmpstateparsing(arrayOfByte1);
+                          break;
+                        case Primaryfiltration:
+                          PacketParser.PrimaryFiltration(arrayOfByte1);
+                          break;
+                        case ModuleIdentification:
+                          sendMessageToParent(packetType, PacketParser.ParseModuleIdentication(arrayOfByte1), 0);
+                          break;
+                        case FilterCycleInfo:
+                          Log.d("SocketListener", "Filter Cycle Info");
+                          sendMessageToParent(packetType, PacketParser.ParseFilterCycle(arrayOfByte1), 0);
+                          break;
+                        case SystemInformation:
+                          sendMessageToParent(packetType, PacketParser.ParseSystemInformation(arrayOfByte1), 0);
+                          break;
+                        case DeviceConfiguration:
+                          sendMessageToParent(packetType, PacketParser.ParseDeviceConfiguration(arrayOfByte1), 0);
+                          break;
+                        case PanelUpdate:
+                          Log.i("SocketListener", "Panel Update");
+                          spaControlState = PacketParser.ParsePanelUpdate(arrayOfByte1);
+                          isPacketget = Boolean.valueOf(true);
+                          sendMessageToParent(packetType, spaControlState, 0);
+                          break;
+                      } 
+                    } 
+                    k = i;
+                    b2 = b;
+                  } 
+                } 
+              } 
+              i++;
+              b = b2;
+              j = k;
+              continue;
+            } 
+            break;
+          } 
+          return bool3;
+        } catch (IOException iOException) {
+          bool3 = bool2;
+        } 
+      } else {
+        return false;
+      } 
+    } catch (IOException iOException) {
+      bool3 = false;
+    } 
+    Log.i("SocketListener", "Error reading data");
+    return bool3;
+  }
+  
+  private void checkForOutgoingData() {
+    if (this.isOutputPending) {
+      SendNetworkPacket(this.outputBuffer);
+      this.isOutputPending = false;
+    } 
+  }
+  
+  private boolean checkHeaderAndFooter(byte[] paramArrayOfbyte) {
+    if (paramArrayOfbyte == null)
+      return false; 
+    if (paramArrayOfbyte.length == 0)
+      return false; 
+    byte b1 = paramArrayOfbyte[0];
+    byte b2 = paramArrayOfbyte[paramArrayOfbyte.length - 1];
+    return !(b1 != 126 || b2 != 126);
+  }
+  
+  private boolean checkPF(byte[] paramArrayOfbyte) {
+    byte b = paramArrayOfbyte[3];
+    return !(b != -81 && b != -65);
+  }
+  
+  private void closeSocket() {
+    try {
+      if (this.outToServer != null)
+        this.outToServer.close(); 
+      if (this.inToServer != null)
+        this.inToServer.close(); 
+      if (this.clientSocket != null) {
+        Log.i("SocketListener", "Closing Socket");
+        this.clientSocket.close();
+      } 
+    } catch (IOException iOException) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Error closing socket - ");
+      stringBuilder.append(iOException);
+      Log.e("SocketListener", stringBuilder.toString());
+    } 
+  }
+  
+  private InetAddress getBroadcastAddress() throws IOException {
+    return InetAddress.getByName("255.255.255.255");
+  }
+  
+  private PacketType getPacketType(byte[] paramArrayOfbyte) {
+    byte b = paramArrayOfbyte[4];
+    if (b != -108) {
+      if (b != 22) {
+        if (b != 27) {
+          if (b != 29) {
+            if (b != 39) {
+              if (b != 46) {
+                switch (b) {
+                  default:
+                    return PacketType.Unknown;
+                  case 37:
+                    return PacketType.SetupParameters;
+                  case 36:
+                    break;
+                } 
+                return PacketType.SystemInformation;
+              } 
+              return PacketType.DeviceConfiguration;
+            } 
+            Log.d("incoming data", Utility.bytesToHex(this.inputBuffer));
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("");
+            stringBuilder.append(paramArrayOfbyte[4]);
+            Log.e("Packet Type Update", stringBuilder.toString());
+            return PacketType.FilterCycleInfo;
+          } 
+          return PacketType.Pupmpstateparsing;
+        } 
+        return PacketType.Primaryfiltration;
+      } 
+      return PacketType.PanelUpdate;
+    } 
+    return PacketType.ModuleIdentification;
+  }
+  
+  private void initializeSocket() {
+    Log.i("SocketListener", "initializeSocket begin");
+    currentState = WifiSocketState.Connecting;
+    this.inputBuffer = new byte[255];
+    this.outputBuffer = new byte[255];
+    this.foundAddress = false;
+    if (currentState != WifiSocketState.Connected)
+      LookupIPByUDPBroadcast(); 
+    if (currentState != WifiSocketState.Connected) {
+      LookupIPByUDPBroadcast();
+      if (this.HOST_IP != null)
+        ConnectSocket(this.HOST_IP); 
+    } 
+  }
+  
+  private void sendMessageToParent(PacketType paramPacketType, Serializable paramSerializable, int paramInt) {
+    Message message = new Message();
+    Bundle bundle = new Bundle();
+    message.what = paramInt;
+    bundle.putInt("packetType", paramPacketType.id);
+    if (paramSerializable != null)
+      bundle.putSerializable("state", paramSerializable); 
+    message.setData(bundle);
+    this.parentHandler.sendMessage(message);
+  }
+  
+  private void setUp() {
+    this.lock = ((WifiManager)this.context.getSystemService("wifi")).createMulticastLock("mylockthereturn");
+    this.lock.setReferenceCounted(true);
+    this.lock.acquire();
+    try {
+      this.jmdns = JmDNS.create();
+      JmDNS jmDNS = this.jmdns;
+      String str = this.type;
+      ServiceListener serviceListener = new ServiceListener() {
+          public void serviceAdded(ServiceEvent param1ServiceEvent) {
+            SocketListenerThread.this.jmdns.requestServiceInfo(param1ServiceEvent.getType(), param1ServiceEvent.getName(), 1L);
+          }
+          
+          public void serviceRemoved(ServiceEvent param1ServiceEvent) {}
+          
+          public void serviceResolved(ServiceEvent param1ServiceEvent) {
+            if (param1ServiceEvent.getInfo().getInetAddresses() != null && (param1ServiceEvent.getInfo().getInetAddresses()).length > 0) {
+              String str = param1ServiceEvent.getInfo().getInetAddresses()[0].getHostAddress();
+              Log.i("Balboa", String.format("Discovered bonjour service %s", new Object[] { param1ServiceEvent.getName() }));
+              if (param1ServiceEvent.getName().equals(SocketListenerThread.this.serviceName)) {
+                SocketListenerThread.access$402(SocketListenerThread.this, str);
+                SocketListenerThread.access$502(SocketListenerThread.this, true);
+                if (SocketListenerThread.this.lock != null)
+                  SocketListenerThread.this.lock.release(); 
+              } 
+            } 
+          }
+        };
+      super(this);
+      this.listener = serviceListener;
+      jmDNS.addServiceListener(str, serviceListener);
+      return;
+    } catch (IOException iOException) {
+      iOException.printStackTrace();
+      return;
+    } 
+  }
+  
+  public void destroy() {
+    super.destroy();
+    Log.i("SocketListener", "Destroy SocketListener");
+  }
+  
+  public Handler getHandler() {
+    return this.myThreadHandler;
+  }
+  
+  public void interrupt() {
+    super.interrupt();
+    this.stopped = true;
+    closeSocket();
+    Log.i("SocketListener", "Thread interuppted");
+  }
+  
+  public void run() {
+    Looper.prepare();
+    this.myThreadHandler = new Handler() {
+        public void handleMessage(Message param1Message) {
+          StringBuilder stringBuilder = new StringBuilder();
+          stringBuilder.append("Handler ");
+          stringBuilder.append(param1Message.what);
+          Log.i("SocketListener", stringBuilder.toString());
+          if (param1Message.what == 0) {
+            Log.i("SocketListener", "Sending Message From Handler");
+            SocketListenerThread.access$002(SocketListenerThread.this, param1Message.getData().getByteArray("outgoingData"));
+            SocketListenerThread.access$102(SocketListenerThread.this, param1Message.getData().getInt("outgoingDataLength"));
+            SocketListenerThread.access$202(SocketListenerThread.this, true);
+          } 
+        }
+      };
+    Log.i("SocketListener", "Entered run sequence");
+    int i = 0;
+    try {
+      while (!this.stopped) {
+        if (this.isInitialized.booleanValue()) {
+          if (this.hasConnectionBeenEstablished.booleanValue()) {
+            if (currentState == WifiSocketState.Connected) {
+              int j = i + 1;
+              checkForOutgoingData();
+              if (checkForIncomingData())
+                j = 0; 
+              i = j;
+              if (j == 100) {
+                currentState = WifiSocketState.NotConnected;
+                i = 0;
+              } 
+              sleep(100L);
+              continue;
+            } 
+            this.isInitialized = Boolean.valueOf(false);
+            continue;
+          } 
+          Log.i("SocketListener", "Still waiting for connection to establish");
+          checkForIncomingData();
+          sleep(1000L);
+          continue;
+        } 
+        initializeSocket();
+        sleep(1000L);
+      } 
+    } catch (InterruptedException interruptedException) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Main socket thread loop exception - ");
+      stringBuilder.append(interruptedException);
+      Log.e("SocketListener", stringBuilder.toString());
+      closeSocket();
+    } 
+  }
+  
+  public void sendNetworkCommand(byte[] paramArrayOfbyte) {
+    this.outputBuffer = paramArrayOfbyte;
+    this.outputCommandLength = paramArrayOfbyte.length;
+    this.isOutputPending = true;
+  }
+  
+  protected String wifiIpAddress(Context paramContext) {
+    int i = ((WifiManager)paramContext.getSystemService("wifi")).getConnectionInfo().getIpAddress();
+    int j = i;
+    if (ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN))
+      j = Integer.reverseBytes(i); 
+    byte[] arrayOfByte = BigInteger.valueOf(j).toByteArray();
+    try {
+      String str = InetAddress.getByAddress(arrayOfByte).getHostAddress();
+    } catch (UnknownHostException unknownHostException) {
+      Log.e("SocketListener", "Unable to get host address.");
+      unknownHostException = null;
+    } 
+    return (String)unknownHostException;
+  }
+}
+
+
+public class PacketParser {
+  public static SpaDeviceConfiguration ParseDeviceConfiguration(byte[] paramArrayOfbyte) {
+    SpaDeviceConfiguration spaDeviceConfiguration = new SpaDeviceConfiguration();
+    byte b1 = paramArrayOfbyte[8];
+    if ((b1 & 0x80) != 0)
+      spaDeviceConfiguration.HasPump0 = true; 
+    byte b2 = paramArrayOfbyte[5];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump1 = true; 
+    if ((b2 & 0xC) != 0)
+      spaDeviceConfiguration.HasPump2 = true; 
+    if ((b2 & 0x30) != 0)
+      spaDeviceConfiguration.HasPump3 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump4 = true; 
+    b2 = paramArrayOfbyte[6];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump5 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump6 = true; 
+    b2 = paramArrayOfbyte[7];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasLight1 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasLight2 = true; 
+    b2 = paramArrayOfbyte[9];
+    if ((b2 & 0x1) != 0)
+      spaDeviceConfiguration.HasAux1 = true; 
+    if ((b2 & 0x2) != 0)
+      spaDeviceConfiguration.HasAux1 = true; 
+    if ((b1 & 0x3) != 0)
+      spaDeviceConfiguration.HasBlower = true; 
+    if ((b2 & 0x10) != 0)
+      spaDeviceConfiguration.HasMister = true; 
+    return spaDeviceConfiguration;
+  }
+  
+  public static FilterCycle ParseFilterCycle(byte[] paramArrayOfbyte) {
+    boolean bool;
+    FilterCycle filterCycle = new FilterCycle();
+    filterCycle.FilterCycle1StartsAtHour = paramArrayOfbyte[5];
+    filterCycle.FilterCycle1StartsAtMinute = paramArrayOfbyte[6];
+    filterCycle.FilterCycle1DurationHour = paramArrayOfbyte[7];
+    filterCycle.FilterCycle1DurationMinute = paramArrayOfbyte[8];
+    byte b = paramArrayOfbyte[9];
+    filterCycle.FilterCycle2StartsAtHour = b & Byte.MAX_VALUE;
+    if ((b & 0x80) > 0) {
+      bool = true;
+    } else {
+      bool = false;
+    } 
+    filterCycle.FilterCycle2Enabled = bool;
+    filterCycle.FilterCycle2StartsAtMinute = paramArrayOfbyte[10];
+    filterCycle.FilterCycle2DurationHour = paramArrayOfbyte[11];
+    filterCycle.FilterCycle2DurationMinute = paramArrayOfbyte[12];
+    return filterCycle;
+  }
+  
+  public static SpaModuleIdentification ParseModuleIdentication(byte[] paramArrayOfbyte) {
+    SpaModuleIdentification spaModuleIdentification = new SpaModuleIdentification();
+    System.arraycopy(paramArrayOfbyte, 14, spaModuleIdentification.iDigiDeviceID, 0, 16);
+    return spaModuleIdentification;
+  }
+  
+  public static SpaControlState ParsePanelUpdate(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      if (paramArrayOfbyte.length < 15)
+        return null; 
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[5];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[6];
+      byte b = paramArrayOfbyte[14];
+      String str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[7] & 0xFF) }).replace(' ', '0');
+      int i = Integer.parseInt(str1.substring(0, 3), 2);
+      int j = Integer.parseInt(str1.substring(3, str1.length()), 2);
+      SpaControlState.currentweek = i;
+      SpaControlState.currentdaysinmonth = j;
+      SpaControlState.currentmonth = paramArrayOfbyte[8];
+      SpaControlState.currentyear = paramArrayOfbyte[9] + 2000;
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[10] & 0xFF) }).replace(' ', '0');
+      int k = Integer.parseInt(str1.substring(0, 2), 2);
+      j = Integer.parseInt(str1.substring(2, 4), 2);
+      i = Integer.parseInt(str1.substring(4, str1.length()), 2);
+      SpaControlState.Filter2Mode = k;
+      SpaControlState.HeatModeState = j;
+      SpaControlState.Spastate = i;
+      if (SpaControlState.Spastate == 1 || SpaControlState.Spastate == 2 || SpaControlState.Spastate == 8 || SpaControlState.Spastate == 9 || SpaControlState.Spastate == 10)
+        SpaControlState.Spastate = -1; 
+      if (TabActivityClass.modalval == 1 && paramArrayOfbyte[11] == 21) {
+        SpaControlState.ErrorCode = 0;
+      } else {
+        SpaControlState.ErrorCode = paramArrayOfbyte[11];
+      } 
+      if (SpaControlState.ErrorCode == 4 || SpaControlState.ErrorCode == 5 || SpaControlState.ErrorCode == 6 || SpaControlState.ErrorCode == 7 || SpaControlState.ErrorCode == 8 || SpaControlState.ErrorCode == 9 || SpaControlState.ErrorCode == 10 || SpaControlState.ErrorCode == 14)
+        SpaControlState.ErrorCode = -1; 
+      i = paramArrayOfbyte[8];
+      SpaControlState.ActualTemperature = paramArrayOfbyte[12];
+      SpaControlState.SetTemperature = paramArrayOfbyte[14];
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[15] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 2), 2);
+      k = Integer.parseInt(str1.substring(1, 3), 2);
+      j = Integer.parseInt(str1.substring(3, 6), 2);
+      Integer.parseInt(str1.substring(5, str1.length()), 2);
+      if (i == 0) {
+        SpaControlState.Pump3State = PumpState.Off;
+      } else if (i == 1) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else {
+        SpaControlState.Pump3State = PumpState.High;
+      } 
+      if (k == 0) {
+        SpaControlState.Pump2State = PumpState.Off;
+      } else if (k == 1) {
+        SpaControlState.Pump2State = PumpState.Low;
+      } else {
+        SpaControlState.Pump2State = PumpState.High;
+      } 
+      if (j == 0) {
+        SpaControlState.Pump1State = PumpState.Off;
+      } else if (j == 1) {
+        SpaControlState.Pump1State = PumpState.Low;
+      } else {
+        SpaControlState.Pump1State = PumpState.High;
+      } 
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[16] & 0xFF) }).replace(' ', '0');
+      String str2 = str1.substring(1, 3);
+      String str3 = str1.substring(2, 4);
+      String str4 = str1.substring(3, 5);
+      String str5 = str1.substring(5, 7);
+      int m = Integer.parseInt(str2, 2);
+      i = Integer.parseInt(str3, 2);
+      j = Integer.parseInt(str4, 2);
+      k = Integer.parseInt(str5, 2);
+      SpaControlState.IsSecondaryON = m;
+      SpaControlState.IsPrimayON = i;
+      SpaControlState.IsBlowerON = j;
+      SpaControlState.IsUVON = k;
+      str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[18] & 0xFF) }).replace(' ', '0');
+      str5 = str2.substring(5, 7);
+      str2.substring(6, str2.length());
+      str2 = str2.substring(7, str2.length());
+      if (Integer.parseInt(str5, 2) == 0) {
+        SpaControlState.Is24HourTime = false;
+      } else {
+        SpaControlState.Is24HourTime = true;
+      } 
+      if (Integer.parseInt(str2) == 0) {
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+      SpaControlState.IsSecondaryON = m;
+      SpaControlState.IsPrimayON = i;
+      str3 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[20] & 0xFF) }).replace(' ', '0');
+      str5 = str3.substring(4, 6);
+      str2 = str3.substring(5, 7);
+      str3 = str3.substring(6, str3.length());
+      SpaControlState.settingLock = Integer.parseInt(str5, 2);
+      SpaControlState.accessLock = Integer.parseInt(str2, 2);
+      SpaControlState.maintenanceLock = Integer.parseInt(str3, 2);
+      SpaControlState.CLEARRAYLSB = paramArrayOfbyte[24];
+      if (SpaControlState.CLEARRAYLSB < 0)
+        SpaControlState.CLEARRAYLSB += 256; 
+      SpaControlState.CLEARRAYMSB = paramArrayOfbyte[25];
+      if (SpaControlState.CLEARRAYMSB < 0)
+        SpaControlState.CLEARRAYMSB += 256; 
+      if (SpaControlState.CLEARRAYLSB >= 0 && SpaControlState.CLEARRAYMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.CLEARRAYLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      SpaControlState.WATERLSB = paramArrayOfbyte[26];
+      if (SpaControlState.WATERLSB < 0)
+        SpaControlState.WATERLSB += 256; 
+      SpaControlState.WATERMSB = paramArrayOfbyte[27];
+      if (SpaControlState.WATERMSB < 0)
+        SpaControlState.WATERMSB += 256; 
+      if (SpaControlState.WATERLSB >= 0 && SpaControlState.WATERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.WATERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 29)
+        return spaControlState; 
+      SpaControlState.OUTERFILTERLSB = paramArrayOfbyte[28];
+      if (SpaControlState.OUTERFILTERLSB < 0)
+        SpaControlState.OUTERFILTERLSB += 256; 
+      SpaControlState.OUTERFILTERMSB = paramArrayOfbyte[29];
+      if (SpaControlState.OUTERFILTERMSB < 0)
+        SpaControlState.OUTERFILTERMSB += 256; 
+      if (SpaControlState.OUTERFILTERLSB >= 0 && SpaControlState.OUTERFILTERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERLSB) }).replace(' ', '0');
+        str5 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str5);
+        SpaControlState.OUTERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 31)
+        return spaControlState; 
+      SpaControlState.INNERFILTERLSB = paramArrayOfbyte[30];
+      if (SpaControlState.INNERFILTERLSB < 0)
+        SpaControlState.INNERFILTERLSB += 256; 
+      SpaControlState.INNERFILTERMSB = paramArrayOfbyte[31];
+      if (SpaControlState.INNERFILTERMSB < 0)
+        SpaControlState.INNERFILTERMSB += 256; 
+      if (SpaControlState.INNERFILTERLSB >= 0 && SpaControlState.INNERFILTERMSB >= 0) {
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERLSB) }).replace(' ', '0');
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str2);
+        stringBuilder.append(str3);
+        SpaControlState.INNERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+      if (paramArrayOfbyte.length < 33)
+        return spaControlState; 
+      String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[32] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 4), 2);
+      if (i == 0) {
+        SpaControlState.WifiState = SpaWifiState.Unknown;
+      } else if (i == 1) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeUnavailable;
+      } else if (i == 2) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeAvailable;
+      } else if (i == 3) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureMode;
+      } else if (i == 4) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud;
+      } else if (i == 5) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkCloud;
+      } else if (i == 14) {
+        SpaControlState.WifiState = SpaWifiState.LINKINGTONETWORK;
+      } else if (i == 15) {
+        SpaControlState.WifiState = SpaWifiState.NOTCOMMUNICATINGTOSPA;
+      } 
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaControlState ParsePanelUpdatee(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      float f;
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[8];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[9];
+      byte b1 = paramArrayOfbyte[14];
+      if ((b1 & 0x1) == 0) {
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+      byte b2 = paramArrayOfbyte[7];
+      if (b2 == 255) {
+        SpaControlState.ActualTemperature = b2;
+      } else {
+        if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+          f = b2;
+        } else {
+          f = b2 / 2.0F;
+        } 
+        SpaControlState.ActualTemperature = f;
+      } 
+      b2 = paramArrayOfbyte[25];
+      if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+        f = b2;
+      } else {
+        f = b2 / 2.0F;
+      } 
+      SpaControlState.TargetTemperature = f;
+      int i = b1 & 0xC;
+      if (i == 0) {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } else if (i == 4) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1;
+      } else if (i == 12) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1_2;
+      } else if (i == 8) {
+        SpaControlState.FilterMode = FilterMode.FILTER_2;
+      } else {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } 
+      i = paramArrayOfbyte[15];
+      if ((i & 0x4) == 4) {
+        SpaControlState.TemperateRange = TemperatureRange.High;
+      } else {
+        SpaControlState.TemperateRange = TemperatureRange.Low;
+      } 
+      b2 = paramArrayOfbyte[19];
+      if ((b2 & 0x3) == 0) {
+        SpaControlState.Light1On = false;
+      } else {
+        SpaControlState.Light1On = true;
+      } 
+      if ((b2 & 0xC) == 0) {
+        SpaControlState.Light2On = false;
+      } else {
+        SpaControlState.Light2On = true;
+      } 
+      b2 = paramArrayOfbyte[10];
+      if (b2 == 0) {
+        SpaControlState.HeatMode = HeatMode.Ready;
+      } else if (b2 == 1) {
+        SpaControlState.HeatMode = HeatMode.Rest;
+      } else if (b2 == 2) {
+        SpaControlState.HeatMode = HeatMode.ReadyInRest;
+      } else {
+        SpaControlState.HeatMode = HeatMode.None;
+      } 
+      i &= 0x30;
+      b2 = paramArrayOfbyte[16];
+      int j = b2 & 0x3;
+      if (j == 1) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.LowHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.Low;
+        } 
+      } else if (j == 2) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.HighHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.High;
+        } 
+      } else {
+        SpaControlState.Pump1State = PumpState.Off;
+      } 
+      j = b2 & 0xC;
+      if (j == 4) {
+        SpaControlState.Pump2State = PumpState.Low;
+      } else if (j == 8) {
+        SpaControlState.Pump2State = PumpState.High;
+      } else {
+        SpaControlState.Pump2State = PumpState.Off;
+      } 
+      j = b2 & 0x30;
+      if (j == 16) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else if (j == 32) {
+        SpaControlState.Pump3State = PumpState.High;
+      } else {
+        SpaControlState.Pump3State = PumpState.Off;
+      } 
+      j = b2 & 0xC0;
+      if (j == 64) {
+        SpaControlState.Pump4State = PumpState.Low;
+      } else if (j == 128) {
+        SpaControlState.Pump4State = PumpState.High;
+      } else {
+        SpaControlState.Pump4State = PumpState.Off;
+      } 
+      j = paramArrayOfbyte[17];
+      int k = j & 0x3;
+      if (k == 1) {
+        SpaControlState.Pump5State = PumpState.Low;
+      } else if (k == 2) {
+        SpaControlState.Pump5State = PumpState.High;
+      } else {
+        SpaControlState.Pump5State = PumpState.Off;
+      } 
+      k = j & 0xC;
+      if (k == 4) {
+        spaControlState.Pump6State = PumpState.Low;
+      } else if (k == 8) {
+        spaControlState.Pump6State = PumpState.High;
+      } else {
+        spaControlState.Pump6State = PumpState.Off;
+      } 
+      k = paramArrayOfbyte[18];
+      int m = k & 0xC;
+      if (m == 4) {
+        SpaControlState.BlowerState = BlowerState.Low;
+      } else if (m == 8) {
+        SpaControlState.BlowerState = BlowerState.Medium;
+      } else if (m == 12) {
+        SpaControlState.BlowerState = BlowerState.High;
+      } else {
+        SpaControlState.BlowerState = BlowerState.Off;
+      } 
+      m = paramArrayOfbyte[20];
+      if ((m & 0x1) == 0) {
+        SpaControlState.MisterOn = false;
+      } else {
+        SpaControlState.MisterOn = true;
+      } 
+      if ((m & 0x8) == 0) {
+        SpaControlState.Aux1On = false;
+      } else {
+        SpaControlState.Aux1On = true;
+      } 
+      if ((m & 0x10) == 0) {
+        SpaControlState.Aux2On = false;
+      } else {
+        SpaControlState.Aux2On = true;
+      } 
+      if (b2 >= 1 || j >= 1 || (k & 0x3) >= 1) {
+        if (i == 0) {
+          spaControlState.PumpStateStatus = PumpState.Low;
+        } else {
+          spaControlState.PumpStateStatus = PumpState.LowHeat;
+        } 
+      } else {
+        spaControlState.PumpStateStatus = PumpState.Off;
+      } 
+      i = paramArrayOfbyte[27];
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaSystemInformation ParseSystemInformation(byte[] paramArrayOfbyte) {
+    SpaSystemInformation spaSystemInformation = new SpaSystemInformation();
+    spaSystemInformation.isOldVersion = false;
+    if (paramArrayOfbyte[7] < 6)
+      spaSystemInformation.isOldVersion = true; 
+    return spaSystemInformation;
+  }
+  
+  public static SpaControlState PrimaryFiltration(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      byte b1 = paramArrayOfbyte[5];
+      byte b2 = paramArrayOfbyte[6];
+      if (b1 >= 0)
+        SpaControlState.StartTimeHour = b1; 
+      if (b2 >= 0)
+        SpaControlState.EndTimeHour = b2; 
+    } 
+    return spaControlState;
+  }
+  
+  public static SpaControlState Pupmpstateparsing(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      int i = 1;
+      String str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[11] & 0xFF) }).replace(' ', '0');
+      String str1 = str2.substring(0, 2);
+      String str3 = str2.substring(2, 4);
+      str2 = str2.substring(4, 6);
+      if (str1.equals("00"))
+        i = 0; 
+      int j = i;
+      if (!str3.equals("00"))
+        j = i + 1; 
+      i = j;
+      if (!str2.equals("00"))
+        i = j + 1; 
+      SpaControlState.NumberofPump = i;
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Number of pumps = ");
+      stringBuilder.append(SpaControlState.NumberofPump);
+      Log.i("SPA_CONTROL_STATE", stringBuilder.toString());
+    } 
+    return spaControlState;
+  }
+}
+
+WifiCommunicator:
+package and.app.jacuzzilive;
+
+import android.content.Context;
+import android.util.Log;
+
+public class WifiCommunicator implements ISpaCommunicator {
+  private ThreadedSocketController tsc;
+  
+  public WifiCommunicator(Context paramContext) {
+    this.tsc = ThreadedSocketController.getInstance(paramContext);
+    ThreadedSocketController threadedSocketController = this.tsc;
+    ThreadedSocketController.start(paramContext);
+  }
+  
+  private SpaControlState GetIntialDemoState() {
+    SpaControlState spaControlState = new SpaControlState();
+    SpaControlState.Aux1On = true;
+    SpaControlState.Aux2On = false;
+    SpaControlState.BlowerState = BlowerState.Off;
+    SpaControlState.Light1On = true;
+    SpaControlState.Light2On = false;
+    SpaControlState.MisterOn = false;
+    SpaControlState.Pump1State = PumpState.Low;
+    SpaControlState.Pump2State = PumpState.Off;
+    SpaControlState.Pump3State = PumpState.High;
+    SpaControlState.Pump4State = PumpState.Low;
+    SpaControlState.Pump5State = PumpState.Off;
+    SpaControlState.Is24HourTime = false;
+    SpaControlState.CurrentTimeHour = 10;
+    return spaControlState;
+  }
+  
+  private void SendButtonCode(SpaButtonCode paramSpaButtonCode) {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)6;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)26;
+    arrayOfByte[5] = (byte)(byte)paramSpaButtonCode.code;
+    arrayOfByte[6] = (byte)0;
+    arrayOfByte[7] = (byte)126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  private void SendCommand(byte[] paramArrayOfbyte) {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    ThreadedSocketController.SendNetworkPacket(paramArrayOfbyte);
+  }
+  
+  public void Aux1ControlPushed() {
+    SendButtonCode(SpaButtonCode.Aux1);
+  }
+  
+  public void Aux2ControlPushed() {
+    SendButtonCode(SpaButtonCode.Aux2);
+  }
+  
+  public void BlowerControlPushed() {
+    SendButtonCode(SpaButtonCode.Blower);
+  }
+  
+  public void ConnectToWifi(ConnectionMethod paramConnectionMethod, SecurityType paramSecurityType, String paramString1, String paramString2) {
+    byte[] arrayOfByte1 = paramString1.getBytes();
+    byte[] arrayOfByte3 = paramString2.getBytes();
+    byte[] arrayOfByte2 = new byte[107];
+    arrayOfByte2[0] = (byte)126;
+    arrayOfByte2[1] = (byte)105;
+    arrayOfByte2[2] = (byte)10;
+    arrayOfByte2[3] = (byte)-65;
+    arrayOfByte2[4] = (byte)-110;
+    arrayOfByte2[5] = (byte)(byte)paramConnectionMethod.id;
+    arrayOfByte2[6] = (byte)(byte)arrayOfByte1.length;
+    byte b;
+    for (b = 0; b < 32; b++) {
+      if (b < arrayOfByte1.length) {
+        arrayOfByte2[b + 7] = (byte)arrayOfByte1[b];
+      } else {
+        arrayOfByte2[b + 7] = (byte)0;
+      } 
+    } 
+    arrayOfByte2[39] = (byte)(byte)paramSecurityType.id;
+    arrayOfByte2[40] = (byte)(byte)arrayOfByte3.length;
+    for (b = 0; b < 64; b++) {
+      if (b < arrayOfByte3.length) {
+        arrayOfByte2[b + 41] = (byte)arrayOfByte3[b];
+      } else {
+        arrayOfByte2[b + 41] = (byte)0;
+      } 
+    } 
+    arrayOfByte2[105] = Utility.CalculateChecksum(arrayOfByte2, 104, true);
+    arrayOfByte2[106] = (byte)126;
+    SendCommand(arrayOfByte2);
+  }
+  
+  public void FilterBoostControlPushed() {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 6;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 23;
+    arrayOfByte[5] = 13;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public SpaDeviceConfiguration GetCurrentConfiguration() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    return ThreadedSocketController.currentConfiguration;
+  }
+  
+  public SpaControlState GetCurrentState() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    if (ThreadedSocketController.currentState != null) {
+      threadedSocketController = this.tsc;
+      return ThreadedSocketController.currentState;
+    } 
+    return GetIntialDemoState();
+  }
+  
+  public SpaSystemInformation GetCurrentSystemInformation() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    return ThreadedSocketController.currentSystemInformation;
+  }
+  
+  public FilterCycle GetFilterCycle() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    if (ThreadedSocketController.currentFilterCycle != null) {
+      threadedSocketController = this.tsc;
+      return ThreadedSocketController.currentFilterCycle;
+    } 
+    return null;
+  }
+  
+  public WifiSocketState GetWifiSocketState() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    return ThreadedSocketController.GetWifiSocketState();
+  }
+  
+  public boolean HasCurrentDeviceConfig() {
+    return true;
+  }
+  
+  public void HeatModePushed(int paramInt) {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)6;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)26;
+    arrayOfByte[5] = (byte)(byte)paramInt;
+    arrayOfByte[6] = (byte)0;
+    arrayOfByte[7] = (byte)126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void Light1ControlPushed() {
+    SendButtonCode(SpaButtonCode.Light1);
+  }
+  
+  public void Light2ControlPushed() {
+    SendButtonCode(SpaButtonCode.Light2);
+  }
+  
+  public void LightColorCommands(int paramInt) {
+    StringBuilder stringBuilder = new StringBuilder();
+    stringBuilder.append("");
+    stringBuilder.append(paramInt);
+    Log.e("mode", stringBuilder.toString());
+    if (paramInt == 1) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 1;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 119;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 2) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 2;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 17;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 3) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 3;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = -50;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 4) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 4;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = -35;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 5) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 5;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 2;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 6) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 6;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 100;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 7) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 31;
+      arrayOfByte[6] = 7;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -1;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = -69;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } 
+  }
+  
+  public void LightExperienceCommands(int paramInt) {
+    StringBuilder stringBuilder = new StringBuilder();
+    stringBuilder.append("");
+    stringBuilder.append(paramInt);
+    Log.e("mode", stringBuilder.toString());
+    if (paramInt == 1) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 20;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 2) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 40;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 3) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 60;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 4) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 80;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 5) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 100;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 0) {
+      byte[] arrayOfByte = new byte[15];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 13;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 33;
+      arrayOfByte[5] = 47;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 126;
+      arrayOfByte[13] = Utility.CalculateChecksum(arrayOfByte, 12, true);
+      SendCommand(arrayOfByte);
+    } 
+  }
+  
+  public void LockControlPushed(int paramInt1, int paramInt2, int paramInt3, int paramInt4, int paramInt5) {
+    byte[] arrayOfByte = new byte[12];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)10;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)31;
+    arrayOfByte[5] = (byte)(byte)paramInt1;
+    arrayOfByte[6] = (byte)(byte)paramInt2;
+    arrayOfByte[7] = (byte)(byte)paramInt3;
+    arrayOfByte[8] = (byte)(byte)paramInt4;
+    arrayOfByte[9] = (byte)(byte)paramInt5;
+    arrayOfByte[10] = (byte)0;
+    arrayOfByte[11] = (byte)126;
+    arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void MisterControlPushed() {
+    SendButtonCode(SpaButtonCode.Mister);
+  }
+  
+  public void Pump1ControlPushed() {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 6;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 23;
+    arrayOfByte[5] = 4;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void Pump2ControlPushed() {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 6;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 23;
+    arrayOfByte[5] = 5;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void Pump3ControlPushed() {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 6;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 23;
+    arrayOfByte[5] = 6;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void Pump4ControlPushed() {
+    SendButtonCode(SpaButtonCode.Pump4);
+  }
+  
+  public void Pump5ControlPushed() {
+    SendButtonCode(SpaButtonCode.Pump5);
+  }
+  
+  public void ResetClearRay() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = 2;
+    arrayOfByte[6] = 1;
+    arrayOfByte[7] = 109;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 0;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 0;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 0;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void ResetProClarity(int paramInt) {
+    if (paramInt == 120) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 32;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 120;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 32;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 0;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = -76;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } 
+  }
+  
+  public void ResetProClarityDepth() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = Byte.MIN_VALUE;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 0;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 0;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 0;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 90;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void ResetWater(int paramInt) {
+    if (paramInt == 30) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 30;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 60) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 60;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 90) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 90;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 120) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = 120;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 150) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = -106;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 180) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = -76;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 210) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = -46;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 240) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 0;
+      arrayOfByte[9] = -16;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 270) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 1;
+      arrayOfByte[9] = 14;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 300) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 1;
+      arrayOfByte[9] = 44;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 330) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 1;
+      arrayOfByte[9] = 74;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt == 365) {
+      byte[] arrayOfByte = new byte[16];
+      arrayOfByte[0] = 126;
+      arrayOfByte[1] = 14;
+      arrayOfByte[2] = 10;
+      arrayOfByte[3] = -65;
+      arrayOfByte[4] = 34;
+      arrayOfByte[5] = 8;
+      arrayOfByte[6] = 0;
+      arrayOfByte[7] = 0;
+      arrayOfByte[8] = 1;
+      arrayOfByte[9] = 109;
+      arrayOfByte[10] = 0;
+      arrayOfByte[11] = 0;
+      arrayOfByte[12] = 0;
+      arrayOfByte[13] = 0;
+      arrayOfByte[14] = 0;
+      arrayOfByte[15] = 126;
+      arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+      SendCommand(arrayOfByte);
+    } 
+  }
+  
+  public void SaveFilterCycle(FilterCycle paramFilterCycle) {
+    SendCommand(Utility.GetBytesForFilterCycle(paramFilterCycle));
+  }
+  
+  public void SecondaryFilterCycle(int paramInt) {
+    byte[] arrayOfByte = new byte[10];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)8;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)28;
+    arrayOfByte[5] = (byte)(byte)paramInt;
+    arrayOfByte[6] = (byte)0;
+    arrayOfByte[7] = (byte)0;
+    arrayOfByte[8] = (byte)0;
+    arrayOfByte[9] = (byte)126;
+    arrayOfByte[8] = Utility.CalculateChecksum(arrayOfByte, 7, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SendDevicePresentQuery() {
+    byte[] arrayOfByte = new byte[7];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 5;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 4;
+    arrayOfByte[5] = 0;
+    arrayOfByte[6] = 126;
+    Log.i("WifiCommunicator", "Sending DevicePresentQuery");
+    arrayOfByte[5] = Utility.CalculateChecksum(arrayOfByte, 4, true);
+    SendCommand(arrayOfByte);
+  }
+/ JD_GUI was not able to decompile WifiCommunicator.SendPanelRequest(). This was the decompiled output of the online Procyon
+// decompiler from www.javadecompilers.com
+//
+// Panel request types: (from PanelRequestType enum class)
+//
+// 0 = "SystemInfo"
+// 1 = "FilterCycles"
+// 2 = "SetupParameters"
+// 3 = "DeviceConfiguration"
+// 4 = "PrimaryFiltration"
+// 5 = "PupmpState"
+//
+
+ @Override
+    public void SendPanelRequest(final PanelRequestType panelRequestType) {
+
+        int n = 0;  // when n = 0, payload1 = n2 and payload2 = n3
+        int n2 = 0; // default value for payload1
+        int n3 = 0; // default value for payload2
+
+        Label_0109: {
+            Label_0052: {
+
+                // The switch case values seem to be off by one! 
+
+                switch (WifiCommunicator$1.$SwitchMap$and$app$jacuzzilive$PanelRequestType[panelRequestType.ordinal()]) {
+                    default: { // unrecognized panel request type -- will go send a 7 byte packet with both payload bytes = 0x00
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        break;
+                    }
+                    case 6: {  // 5 = "PupmpState" ??
+                        n = 5; // n is not 0 or 1, so ignore n2 and n3; payload1 = 16, payload2 = 0
+                        break;
+                    }
+                    case 5: {  // 4 = "PrimaryFiltration" ??
+                        n = 1; // n = 1 so ignore n2 and n3; payload1 = 1, payload2 = 0
+                        break;
+                    }
+                    case 4: {  // 3 = "DeviceConfiguration" ??
+                        Log.i("Balboa", "Requesting device config");
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 0;
+                        n3 = 1;
+                        break Label_0109; // go use the value of n to create a message packet of the correct size
+                    }
+                    case 3: {  // 2 = "SetupParameters" ??
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 4;
+                        break Label_0052; // go set n3 = 0
+                    }
+                    case 2: {  // 1 = "FilterCycles"
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 1;
+                        break Label_0052; // go set n3 = 0
+                    }
+                    case 1: {  // 0 = "SystemInfo"
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 2;
+                        break Label_0052; // go set n3 = 0
+                    }
+                }
+                n2 = 0;
+            }
+            // End of Label_0052 block
+            n3 = 0;
+        }
+
+        // End of Label_0109 block
+        // Now use the value of n to create a message packet of the correct size
+
+        if (n == 0) {
+
+            // Message packet type = 0x19 = 25 (??); n2 and n3 are the payload bytes
+            // Most Packet Request message types end up here
+            // Should be a 7 byte packet
+
+            final byte[] array = { 126, 25, (byte)n2, (byte)n3, 0, 126 }; // Packet seems to be missing the length byte!
+            array[3] = Utility.CalculateChecksum(array, 2, true);// Checksum only includes 2 bytes & is written to wrong byte!
+            this.SendCommand(array);
+        }
+        else if (n == 1) {   // Only when panel request type = 4 = "PrimaryFiltration" ??
+
+            // 9 byte message packet
+
+            final byte[] array3;
+            final byte[] array2 = array3 = new byte[9]; // array3[] gets set up, but array2[] gets sent!
+            array3[0] = 126;
+            array3[1] = 7;
+            array3[2] = 10;
+            array3[3] = -65;
+            array3[4] = 25;  // message packet type = 0x19 = 25
+            array3[5] = 1;   // payload1 = 1
+            array3[6] = 0;   // payload2 = 0
+            array3[7] = -107;
+            array3[8] = 126;
+            array2[7] = Utility.CalculateChecksum(array2, 6, true); // Checksum written to wrong array??
+            this.SendCommand(array2);                               // sending array2[] not array3[]
+        
+        else {  // Only when panel request type = 5 = "PupmpState" ??
+
+            // also a 9 byte message packet 
+
+            final byte[] array5;
+            final byte[] array4 = array5 = new byte[9];
+            array5[0] = 126;
+            array5[1] = 7;
+            array5[2] = 10;
+            array5[3] = -65;
+            array5[4] = 25;  // message packet type = 0x19 = 25 
+            array5[5] = 16;  // payload1 = 16 = 0x10
+            array5[6] = 0;   // payload2 = 0 = 0x00
+            array5[7] = -107;
+            array5[8] = 126;
+            array4[7] = Utility.CalculateChecksum(array4, 6, true);
+            this.SendCommand(array4);                               // sending array4[] not array5[]
+        }
+    }
+   
+  public void SendPrimaryFiltration(int paramInt1, int paramInt2) {
+    byte[] arrayOfByte = new byte[9];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)7;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)27;
+    arrayOfByte[5] = (byte)(byte)paramInt1;
+    arrayOfByte[6] = (byte)(byte)paramInt2;
+    arrayOfByte[7] = (byte)0;
+    arrayOfByte[8] = (byte)126;
+    Log.d("WifiCommunicator", "Sending Button");
+    arrayOfByte[7] = Utility.CalculateChecksum(arrayOfByte, 6, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void Set24HourTime(boolean paramBoolean) {}
+  
+  public void SetTargetTemperature(float paramFloat) {
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)6;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)32;
+    arrayOfByte[5] = (byte)(byte)(int)paramFloat;
+    arrayOfByte[6] = (byte)0;
+    arrayOfByte[7] = (byte)126;
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SetTemperatureScale(TemperatureScale paramTemperatureScale) {
+    byte b;
+    if (paramTemperatureScale == TemperatureScale.Celsius) {
+      b = 40;
+    } else {
+      b = 41;
+    } 
+    byte[] arrayOfByte = new byte[8];
+    arrayOfByte[0] = (byte)126;
+    arrayOfByte[1] = (byte)6;
+    arrayOfByte[2] = (byte)10;
+    arrayOfByte[3] = (byte)-65;
+    arrayOfByte[4] = (byte)23;
+    arrayOfByte[5] = (byte)b;
+    arrayOfByte[6] = (byte)0;
+    arrayOfByte[7] = (byte)126;
+    arrayOfByte[6] = Utility.CalculateChecksum(arrayOfByte, 5, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SetTime(int paramInt1, int paramInt2, int paramInt3, int paramInt4, int paramInt5) {
+    if (paramInt4 == 1) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-15;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 2) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-14;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 3) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-13;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 4) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-13;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 5) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-12;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 6) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-11;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 7) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-10;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 8) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-9;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 9) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-8;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 10) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-7;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 11) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-5;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } else if (paramInt4 == 12) {
+      byte[] arrayOfByte = new byte[12];
+      arrayOfByte[0] = (byte)126;
+      arrayOfByte[1] = (byte)10;
+      arrayOfByte[2] = (byte)10;
+      arrayOfByte[3] = (byte)-65;
+      arrayOfByte[4] = (byte)24;
+      arrayOfByte[5] = (byte)-4;
+      arrayOfByte[6] = (byte)(byte)paramInt3;
+      arrayOfByte[7] = (byte)(byte)paramInt5;
+      arrayOfByte[8] = (byte)(byte)paramInt1;
+      arrayOfByte[9] = (byte)(byte)paramInt2;
+      arrayOfByte[10] = (byte)0;
+      arrayOfByte[11] = (byte)126;
+      arrayOfByte[10] = Utility.CalculateChecksum(arrayOfByte, 9, true);
+      SendCommand(arrayOfByte);
+    } 
+  }
+  
+  public void SnozzeClearRay() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = 1;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 10;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 0;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 0;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 0;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SnozzeProClarity() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = 16;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 0;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 0;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 10;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 0;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SnozzeProClarityDepth() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = 64;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 0;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 0;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 0;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 10;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void SnozzeWater() {
+    byte[] arrayOfByte = new byte[16];
+    arrayOfByte[0] = 126;
+    arrayOfByte[1] = 14;
+    arrayOfByte[2] = 10;
+    arrayOfByte[3] = -65;
+    arrayOfByte[4] = 34;
+    arrayOfByte[5] = 4;
+    arrayOfByte[6] = 0;
+    arrayOfByte[7] = 0;
+    arrayOfByte[8] = 0;
+    arrayOfByte[9] = 10;
+    arrayOfByte[10] = 0;
+    arrayOfByte[11] = 0;
+    arrayOfByte[12] = 0;
+    arrayOfByte[13] = 0;
+    arrayOfByte[14] = 0;
+    arrayOfByte[15] = 126;
+    arrayOfByte[14] = Utility.CalculateChecksum(arrayOfByte, 13, true);
+    SendCommand(arrayOfByte);
+  }
+  
+  public void StartThread(Context paramContext) {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    ThreadedSocketController.start(paramContext);
+  }
+  
+  public void StopThread() {
+    ThreadedSocketController threadedSocketController = this.tsc;
+    ThreadedSocketController.StopThread();
+  }
+  
+  public void TempRangePushed() {
+    SendButtonCode(SpaButtonCode.TempRange);
+  }
+}
+
+

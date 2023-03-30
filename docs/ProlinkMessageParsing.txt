@@ -1,0 +1,1660 @@
+Balboa Message types (from line 48 of balboa.py)
+------------------------------------------------
+
+These are bytes 2,3,and 4 of a message header. Byte 0 is always 0x7E and byte 1 is the message length including the checksum byte but NOT including the starting or ending 0x7E
+
+mtypes = [
+    [0xFF, 0xAF, 0x13],  # BMTR_STATUS_UPDATE
+    [0x0A, 0xBF, 0x23],  # BMTR_FILTER_INFO_RESP
+    [0x0A, 0xBF, 0x04],  # BMTS_CONFIG_REQ
+    [0x0A, 0xBF, 0x94],  # BMTR_MOD_IDENT_RESP
+    [0x0A, 0xBF, 0x22],  # BMTS_FILTER_REQ
+    [0x0A, 0xBF, 0x11],  # BMTS_CONTROL_REQ
+    [0x0A, 0xBF, 0x20],  # BMTS_SET_TEMP
+    [0x0A, 0xBF, 0x21],  # BMTS_SET_TIME
+    [0x0A, 0xBF, 0x92],  # BMTS_SET_WIFI
+    [0x0A, 0xBF, 0x22],  # BMTS_PANEL_REQ
+    [0x0A, 0xBF, 0x27],  # BMTS_SET_TSCALE
+    [0x0A, 0xBF, 0x2E],  # BMTR_DEVICE_CONFIG_RESP
+    [0x0A, 0xBF, 0x24],  # BMTR_SYS_INFO_RESP
+    [0x0A, 0xBF, 0x25],  # BMTR_SETUP_PARAMS_RESP
+
+-----------------------------------------------------------------------------------------------------------
+
+From decompile of Prolink App: (with my comments added at // )
+--------------------------------------------------------------
+
+// These are the message packets supported by Prolink
+
+public enum PacketType {
+  ConnectionEstablished,                  // Only sent to parent of listener thread?
+  DeviceConfiguration,                    // 3rd byte = 0x2E (same as Balboa)
+  FilterCycleInfo,                        // 3rd byte = 0x27 (BMTS_FILTER_INFO_RESP = 0x23)
+  ModuleIdentification,                   // 3rd byte = 0x94 (BMTS_MOD_IDENT_RESP = 0x94)
+  PanelUpdate(1),                         // 3rd byte = 0x16 (BMTS_PANEL_REQ = 0x22)
+  Primaryfiltration(1),                   // 3rd byte = 0x1B (BMTS_FILTER_REQ =0x22 -- note duplicate!)
+  Pupmpstateparsing(1),                   // 3rd byte = 0x1D 
+  SetupParameters(1),                     // 3rd byte = 0x25 (same as Balboa)
+  SystemInformation(1),                   // 3rd byte = 0x24 (same as Balboa)
+  Unknown(1);                             // 3rd byte = anything else
+  
+  public int id;
+  
+  static {
+    DeviceConfiguration = new PacketType("DeviceConfiguration", 1, 2);
+    SetupParameters = new PacketType("SetupParameters", 2, 3);
+    SystemInformation = new PacketType("SystemInformation", 3, 4);
+    Unknown = new PacketType("Unknown", 4, 5);
+    FilterCycleInfo = new PacketType("FilterCycleInfo", 5, 6);
+    ModuleIdentification = new PacketType("ModuleIdentification", 6, 7);
+    ConnectionEstablished = new PacketType("ConnectionEstablished", 7, 8);
+    Primaryfiltration = new PacketType("Primaryfiltration", 8, 9);
+    Pupmpstateparsing = new PacketType("Pupmpstateparsing", 9, 10);
+    $VALUES = new PacketType[] { PanelUpdate, DeviceConfiguration, SetupParameters, SystemInformation, Unknown, FilterCycleInfo, ModuleIdentification, ConnectionEstablished, Primaryfiltration, Pupmpstateparsing };
+  }
+  
+  PacketType(int paramInt1) {
+    this.id = paramInt1;
+  }
+}
+
+-----------------------------------------------------------------------------------------------
+
+// This class decodes the individual bytes of an incoming packet
+
+public class PacketParser {
+
+//
+// Parse Device Configuration packets -- message type 3rd byte = 0x2E (same as Balboa)
+// Reads bytes 5,6,7,8 and 9 of the message packet
+//
+// When there are two bits for a pump, that pump can have up to 3 speeds plus off
+//
+// Byte 5
+// Byte 7,6 = Has pump 4
+// Bits 5,4 = Has pump 3
+// Bits 3,2 = Has pump 2
+// Bits 1,0 = Has pump 1
+//
+// Byte 6
+// Byte 7,6 = Has pump 6
+// Bits 5,4 = unused
+// Bits 3,2 = unused
+// Bits 1,0 = Has pump 5
+//
+// Byte 7
+// Byte 7,6 = Has light 2
+// Bits 5,4 = unused
+// Bits 3,2 = unused
+// Bits 1,0 = Has light 1
+//
+// Byte 8
+// Bit 7 = Has pump 0
+// Bits 6,5,4 = unused
+// Bits 3,2 = unused
+// Bits 1,0 = Has blower
+//
+// Byte 9
+// Bits 7-5 = unused
+// Bit 4 = Has mister
+// Bit 3 = unused
+// Bit 1 = Has Aux2 (?)
+// Bit 0 = Has Aux1
+//
+// From BWA docs:
+// Control Configuration 2
+//
+// Sent when the app goes to the Controls screen
+//
+// Message type 0a bf 2e
+
+  public static SpaDeviceConfiguration ParseDeviceConfiguration(byte[] paramArrayOfbyte) {
+    SpaDeviceConfiguration spaDeviceConfiguration = new SpaDeviceConfiguration();
+    byte b1 = paramArrayOfbyte[8];
+    if ((b1 & 0x80) != 0)
+      spaDeviceConfiguration.HasPump0 = true; 
+    byte b2 = paramArrayOfbyte[5];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump1 = true; 
+    if ((b2 & 0xC) != 0)
+      spaDeviceConfiguration.HasPump2 = true; 
+    if ((b2 & 0x30) != 0)
+      spaDeviceConfiguration.HasPump3 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump4 = true; 
+    b2 = paramArrayOfbyte[6];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasPump5 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasPump6 = true; 
+    b2 = paramArrayOfbyte[7];
+    if ((b2 & 0x3) != 0)
+      spaDeviceConfiguration.HasLight1 = true; 
+    if ((b2 & 0xC0) != 0)
+      spaDeviceConfiguration.HasLight2 = true; 
+    b2 = paramArrayOfbyte[9];
+    if ((b2 & 0x1) != 0)
+      spaDeviceConfiguration.HasAux1 = true; 
+    if ((b2 & 0x2) != 0)
+      spaDeviceConfiguration.HasAux1 = true; // should be HasAux2 ??
+    if ((b1 & 0x3) != 0)
+      spaDeviceConfiguration.HasBlower = true; 
+    if ((b2 & 0x10) != 0)
+      spaDeviceConfiguration.HasMister = true; 
+    return spaDeviceConfiguration;
+  }
+  
+//
+// Parse a Filter Cycle message packet
+//
+// Byte 5 = FilterCycle1StartsAtHour
+// Byte 6 = FilterCycle1StartsAtMinute
+// Byte 7 = FilterCycle1DurationHour
+// Byte 8 = FilterCycle1DurationMinute
+// Byte 9 = FilterCycle2StartsAtHour (bit 7 is Filter2CycleEnabled bit)
+// Byte 10 = FilterCycle2StartsAtMinute
+// Byte 11 = FilterCycle2DurationHour
+// Byte 12 = FilterCycle2DurationMinute
+//
+
+  public static FilterCycle ParseFilterCycle(byte[] paramArrayOfbyte) {
+    boolean bool;
+    FilterCycle filterCycle = new FilterCycle();
+    filterCycle.FilterCycle1StartsAtHour = paramArrayOfbyte[5];
+    filterCycle.FilterCycle1StartsAtMinute = paramArrayOfbyte[6];
+    filterCycle.FilterCycle1DurationHour = paramArrayOfbyte[7];
+    filterCycle.FilterCycle1DurationMinute = paramArrayOfbyte[8];
+
+// Bit 7 of message byte 9 is Filter2CycleEnabled bit
+
+    byte b = paramArrayOfbyte[9];
+    filterCycle.FilterCycle2StartsAtHour = b & Byte.MAX_VALUE;
+    if ((b & 0x80) > 0) {
+      bool = true;
+    } else {
+      bool = false;
+    } 
+    filterCycle.FilterCycle2Enabled = bool;
+
+    filterCycle.FilterCycle2StartsAtMinute = paramArrayOfbyte[10];
+    filterCycle.FilterCycle2DurationHour = paramArrayOfbyte[11];
+    filterCycle.FilterCycle2DurationMinute = paramArrayOfbyte[12];
+    return filterCycle;
+  }
+
+// Create a SpaModuleIdentification object and copy into it the 16 byte iDigiDeviceID from offset 14 of the message packet
+  
+  public static SpaModuleIdentification ParseModuleIdentication(byte[] paramArrayOfbyte) {
+    SpaModuleIdentification spaModuleIdentification = new SpaModuleIdentification();
+    // System.arraycopy(source_arr, sourcePos, dest_arr, destPos, len);
+    System.arraycopy(paramArrayOfbyte, 14, spaModuleIdentification.iDigiDeviceID, 0, 16);
+    return spaModuleIdentification;
+  }
+
+// 
+// Process a PanelUpdate message packet and return a SpaControlState object from it
+//
+// Total packet size must be at least 15 bytes
+//
+// Byte 5 = CurrentTimeHour
+// Byte 6 = CurrentTimeMinute
+// Byte 7 Bits 7,6,5 = currentWeek (day of week??)
+// Byte 7 Bits 4,3,2,1,0 = daysInMonth 
+// Byte 8 = currentMonth
+// Byte 9 = currentYear (since 2000)
+// Byte 10 Bits 7,6 = Filter2Mode
+// Byte 10 Bits 5,4 = HeatModeState
+// Byte 10 Bits 3,2,1,0 = SpaState (values of 1,2,8,9 or 10 get forced to -1)
+// Byte 11 = errorCode 
+//   If errorCode value = 21 and TabActivityClass.modalval == 1 then erroCode gets forced to 0
+//   If erroCode value is 4,5,6,7,8,9,10 or 14, then errorCode gets forced to -1
+// Byte 12 = ActualTemperature
+// Byte 13 = don't care?
+// Byte 14 = SetTemperature
+// Byte 15 Bits 7,6 = Pump3State
+// Byte 15 Bits 6,5 = Pump2State (bit posn off by 1??)
+// Byte 15 Bits 4,3,2 = Pump1State
+// Byte 15 Bits 2,1,0 read but not used
+// Byte 16 Bits 6,5 = IsSecondaryON
+// Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??)
+// Byte 16 Bits 4,3 = IsBlowerON (Bit posn off by 1??)
+// Byte 16 Bits 2,1 = IsUVON
+// Byte 17 = don't care?
+// Byte 18 Bits 2,1 = Is24HourTime (12 hr only if both bits are 0)
+// Byte 18 Bit 0 = TemperatureScale (Degrees F only if bit is 0)
+// Byte 19 = don't care?
+// Byte 20 Bits 4,3 = settingLock
+// Byte 20 Bits 2,1 = accessLock
+// Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
+// Byte 21 = don't care?
+// Byte 22 = don't care?
+// Byte 23 = don't care?
+// Byte 24 = CLEARRAYLSB (but all MSBs are actually swapped with LSBs)
+// Byte 25 = CLEARRAYMSB
+// Byte 26 = WATERLSB
+// Byte 27 = WATERMSB
+// The following bytes may not be present
+// Byte 28 = OUTERFILTERLSB
+// Byte 29 = OUTERFILTERMSB
+// The following bytes may not be present
+// Byte 30 = INNERFILTERLSB
+// Byte 31 = INNERFILTERMSB
+// The following byte may not be present
+// Byte 32 Bits 7,6,5,4 = WiFiState
+//   0 = SpaWifiState.Unknown
+//   1 = SpaWifiState.SoftAPmodeUnavailable
+//   2 = SpaWifiState.SoftAPmodeAvailable
+//   3 = SpaWifiState.InfrastructureMode
+//   4 = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud
+//   5 = SpaWifiState.InfrastructureModeConnectedToNeworkCloud;
+//   14 = SpaWifiState.LINKINGTONETWORK;
+//   15 = SpaWifiState.NOTCOMMUNICATINGTOSPA;
+//
+  //
+  // There is a misspelled version of this method (ends with ee not e) following this one
+  // The offsets to the message packet byte values are different between the two
+  //
+  public static SpaControlState ParsePanelUpdate(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+
+    if (TabActivityClass.Value != 100) { // Value defaults to 0; never changes?
+      if (paramArrayOfbyte.length < 15)
+        return null; 
+
+      // Extract current time and date info, then save in spaControlState
+
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[5];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[6];
+
+      byte b = paramArrayOfbyte[14]; // Byte 14 = setTemperature. Variable b is not used?
+
+      //
+      // Extract the value of byte 7 as an 8 bit binary string 
+      //
+      String str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[7] & 0xFF) }).replace(' ', '0');
+
+      int i = Integer.parseInt(str1.substring(0, 3), 2);              // Byte 7 Bits 7,6,5 = currentWeek (day of week??)
+      int j = Integer.parseInt(str1.substring(3, str1.length()), 2);  // Byte 7 Bits 4,3,2,1,0 = daysInMonth
+
+      SpaControlState.currentweek = i;
+      SpaControlState.currentdaysinmonth = j;
+
+      SpaControlState.currentmonth = paramArrayOfbyte[8];             // Byte 8 = currentMonth
+      SpaControlState.currentyear = paramArrayOfbyte[9] + 2000;       // Byte 9 = currentYear (since 2000)
+
+      //
+      // Extract the value of byte 10 as an 8 bit binary string 
+      //
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[10] & 0xFF) }).replace(' ', '0');
+      int k = Integer.parseInt(str1.substring(0, 2), 2);              // Byte 10 Bits 7,6 = Filter2Mode
+      j = Integer.parseInt(str1.substring(2, 4), 2);                  // Byte 10 Bits 5,4 = HeatModeState
+      i = Integer.parseInt(str1.substring(4, str1.length()), 2);      // Byte 10 Bits 3,2,1,0 = SpaState
+      SpaControlState.Filter2Mode = k;
+      SpaControlState.HeatModeState = j;
+      SpaControlState.Spastate = i;
+
+      // Prevent illegal states??
+
+      if (SpaControlState.Spastate == 1 || SpaControlState.Spastate == 2 || SpaControlState.Spastate == 8 || SpaControlState.Spastate == 9 || SpaControlState.Spastate == 10)
+        SpaControlState.Spastate = -1; 
+
+      // Byte 11 holds error code
+
+      if (TabActivityClass.modalval == 1 && paramArrayOfbyte[11] == 21) { // "It’s time to replace your ProClarity Depth filter"
+        SpaControlState.ErrorCode = 0;
+      } else {
+        SpaControlState.ErrorCode = paramArrayOfbyte[11];
+      } 
+      if (SpaControlState.ErrorCode == 4 || SpaControlState.ErrorCode == 5 || SpaControlState.ErrorCode == 6 || SpaControlState.ErrorCode == 7 || SpaControlState.ErrorCode == 8 || SpaControlState.ErrorCode == 9 || SpaControlState.ErrorCode == 10 || SpaControlState.ErrorCode == 14)
+        SpaControlState.ErrorCode = -1; 
+
+      i = paramArrayOfbyte[8];        // Variable i is not used (Byte 8 = currentMonth)
+
+      SpaControlState.ActualTemperature = paramArrayOfbyte[12];    // Byte 12 = ActualTemperature
+      SpaControlState.SetTemperature = paramArrayOfbyte[14];       // Byte 14 = SetTemperature
+
+      //
+      // Extract the value of byte 15 as an 8 bit binary string 
+      //
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[15] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 2), 2);               // Byte 15 Bits 7,6 = Pump3State
+      k = Integer.parseInt(str1.substring(1, 3), 2);               // Byte 15 Bits 6,5 = Pump2State (bit posn off by 1??)
+      j = Integer.parseInt(str1.substring(3, 6), 2);               // Byte 15 Bits 4,3,2 = Pump1State
+      Integer.parseInt(str1.substring(5, str1.length()), 2);       // Byte 15 Bits 2,1,0 read but discarded
+      if (i == 0) {
+        SpaControlState.Pump3State = PumpState.Off;
+      } else if (i == 1) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else {
+        SpaControlState.Pump3State = PumpState.High;
+      } 
+      if (k == 0) {
+        SpaControlState.Pump2State = PumpState.Off;                // Bit posn error will cause Pump2State = High
+      } else if (k == 1) {                                         // whenever Pump3State = Low
+        SpaControlState.Pump2State = PumpState.Low;
+      } else {
+        SpaControlState.Pump2State = PumpState.High;
+      } 
+      if (j == 0) {
+        SpaControlState.Pump1State = PumpState.Off;                // Bit posn error will cause Pump1State = High
+      } else if (j == 1) {                                         // whenever Pump2State = Low
+        SpaControlState.Pump1State = PumpState.Low;
+      } else {
+        SpaControlState.Pump1State = PumpState.High;
+      } 
+
+      //
+      // Extract the value of byte 16 as an 8 bit binary string 
+      //
+      str1 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[16] & 0xFF) }).replace(' ', '0');
+      String str2 = str1.substring(1, 3);               // Byte 16 Bits 6,5 = IsSecondaryON
+      String str3 = str1.substring(2, 4);               // Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??)
+      String str4 = str1.substring(3, 5);               // Byte 16 Bits 4,3 = IsBlowerON (Bit posn off by 1??_
+      String str5 = str1.substring(5, 7);               // Byte 16 Bits 2,1 = IsUVON
+      int m = Integer.parseInt(str2, 2);
+      i = Integer.parseInt(str3, 2);
+      j = Integer.parseInt(str4, 2);
+      k = Integer.parseInt(str5, 2);
+      SpaControlState.IsSecondaryON = m;
+      SpaControlState.IsPrimayON = i;
+      SpaControlState.IsBlowerON = j;
+      SpaControlState.IsUVON = k;
+
+      //
+      // Extract the value of byte 18 as an 8 bit binary string 
+      //
+      str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[18] & 0xFF) }).replace(' ', '0');
+      str5 = str2.substring(5, 7);                       // Byte 18 Bits 2,1 = Is24HourTime (12 hr only if both bits are 0)
+      str2.substring(6, str2.length());                  // This value remains unassigned to any variable
+      str2 = str2.substring(7, str2.length());           // str2 is reassigned to lowest bit of binary string
+      if (Integer.parseInt(str5, 2) == 0) {
+        SpaControlState.Is24HourTime = false;
+      } else {
+        SpaControlState.Is24HourTime = true;
+      } 
+      if (Integer.parseInt(str2) == 0) {                 // Byte 18 Bit 0 = TemperatureScale (Degrees F only if bit is 0)
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+
+      SpaControlState.IsSecondaryON = m;                 // Duplicate assignment of IsSecondaryON
+      SpaControlState.IsPrimayON = i;                    // Duplicate assignment of IsPrimaryON
+
+      //
+      // Extract the value of byte 20 as an 8 bit binary string 
+      //
+      str3 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[20] & 0xFF) }).replace(' ', '0');
+      str5 = str3.substring(4, 6);                       // Byte 20 Bits 4,3 = settingLock
+      str2 = str3.substring(5, 7);                       // Byte 20 Bits 2,1 = accessLock
+      str3 = str3.substring(6, str3.length());           // Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
+      SpaControlState.settingLock = Integer.parseInt(str5, 2);
+      SpaControlState.accessLock = Integer.parseInt(str2, 2);
+      SpaControlState.maintenanceLock = Integer.parseInt(str3, 2);
+
+      //
+      // The following mess appears to try to build a 16 bit value in CLEARRAYLSB from the MSB and LSB values in Byte 25 & 24
+      // Basic process is to convert each byte into an 8 digit binary string, append the strings, and then convert the
+      // resulting 16-character binary string into an integer.  However it appears that the MSB and LSB values are swapped.
+      //
+      SpaControlState.CLEARRAYLSB = paramArrayOfbyte[24]; // Byte 24 = CLEARRAYLSB
+      if (SpaControlState.CLEARRAYLSB < 0)
+        SpaControlState.CLEARRAYLSB += 256;               // Correct the value if bit 7 = 1 
+      SpaControlState.CLEARRAYMSB = paramArrayOfbyte[25]; // Byte 25 = CLEARRAYMSB
+      if (SpaControlState.CLEARRAYMSB < 0)
+        SpaControlState.CLEARRAYMSB += 256;                // Correct the value if bit 7 = 1 
+      if (SpaControlState.CLEARRAYLSB >= 0 && SpaControlState.CLEARRAYMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.CLEARRAYMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.CLEARRAYLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+
+      //
+      // The following mess appears to try to build a 16 bit value in WATERLSB from the MSB and LSB values in Byte 27 & 26
+      //
+      SpaControlState.WATERLSB = paramArrayOfbyte[26];
+      if (SpaControlState.WATERLSB < 0)
+        SpaControlState.WATERLSB += 256; 
+      SpaControlState.WATERMSB = paramArrayOfbyte[27];
+      if (SpaControlState.WATERMSB < 0)
+        SpaControlState.WATERMSB += 256; 
+      if (SpaControlState.WATERLSB >= 0 && SpaControlState.WATERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERLSB) }).replace(' ', '0');
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.WATERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str2);
+        SpaControlState.WATERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      }
+
+      //
+      // The message packet may have additional fields
+      //
+      if (paramArrayOfbyte.length < 29)
+        return spaControlState; 
+
+      //
+      // The following mess appears to try to build a 16 bit value in OUTERFILTERLSB from the MSB and LSB values in Byte 29 & 28
+      //
+      SpaControlState.OUTERFILTERLSB = paramArrayOfbyte[28];
+      if (SpaControlState.OUTERFILTERLSB < 0)
+        SpaControlState.OUTERFILTERLSB += 256; 
+      SpaControlState.OUTERFILTERMSB = paramArrayOfbyte[29];
+      if (SpaControlState.OUTERFILTERMSB < 0)
+        SpaControlState.OUTERFILTERMSB += 256; 
+      if (SpaControlState.OUTERFILTERLSB >= 0 && SpaControlState.OUTERFILTERMSB >= 0) {
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERLSB) }).replace(' ', '0');
+        str5 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.OUTERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str3);
+        stringBuilder.append(str5);
+        SpaControlState.OUTERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+
+      //
+      // The message packet may have additional fields
+      //
+      if (paramArrayOfbyte.length < 31)
+        return spaControlState; 
+
+      //
+      // The following mess appears to try to build a 16 bit value in INNERFILTERLSB from the MSB and LSB values in Byte 31 & 30
+      //
+      SpaControlState.INNERFILTERLSB = paramArrayOfbyte[30];
+      if (SpaControlState.INNERFILTERLSB < 0)
+        SpaControlState.INNERFILTERLSB += 256; 
+      SpaControlState.INNERFILTERMSB = paramArrayOfbyte[31];
+      if (SpaControlState.INNERFILTERMSB < 0)
+        SpaControlState.INNERFILTERMSB += 256; 
+      if (SpaControlState.INNERFILTERLSB >= 0 && SpaControlState.INNERFILTERMSB >= 0) {
+        str2 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERLSB) }).replace(' ', '0');
+        str3 = String.format("%8s", new Object[] { Integer.toBinaryString(SpaControlState.INNERFILTERMSB) }).replace(' ', '0');
+        StringBuilder stringBuilder = new StringBuilder();
+        stringBuilder.append(str2);
+        stringBuilder.append(str3);
+        SpaControlState.INNERFILTERLSB = Integer.parseInt(stringBuilder.toString(), 2);
+      } 
+
+      //
+      // The message packet may have additional fields
+      //
+      if (paramArrayOfbyte.length < 33)
+        return spaControlState; 
+
+      //
+      // WiFiState is encoded in the upper 4 bits of Byte 32
+      //
+      String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[32] & 0xFF) }).replace(' ', '0');
+      i = Integer.parseInt(str1.substring(0, 4), 2);
+      if (i == 0) {
+        SpaControlState.WifiState = SpaWifiState.Unknown;
+      } else if (i == 1) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeUnavailable;
+      } else if (i == 2) {
+        SpaControlState.WifiState = SpaWifiState.SoftAPmodeAvailable;
+      } else if (i == 3) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureMode;
+      } else if (i == 4) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud;
+      } else if (i == 5) {
+        SpaControlState.WifiState = SpaWifiState.InfrastructureModeConnectedToNeworkCloud;
+      } else if (i == 14) {
+        SpaControlState.WifiState = SpaWifiState.LINKINGTONETWORK;
+      } else if (i == 15) {
+        SpaControlState.WifiState = SpaWifiState.NOTCOMMUNICATINGTOSPA;
+      } 
+    } 
+    return spaControlState;
+  }
+  
+// SpaControlState ParsePanelUpdatee(byte[] paramArrayOfbyte):
+//
+// Oddly, this seems to be a misspelled version of the method above -- not called anywhere?
+// The offsets to message packet bytes are different between the two
+// Gave up noting the differences since there are many and this method is never called
+//
+// My guess is that the author cut and pasted this version here to use as a reference as he wrote the real one above.
+//
+// (This version does not quit if total packet size is less than 15 bytes)
+// (only the lines prefixed with * are accurate!)
+//
+*// Byte 8 = CurrentTimeHour (not byte 5)
+*// Byte 9 = CurrentTimeMinute (not byte 6)
+// Byte 7 Bits 7,6,5 = currentWeek (day of week??)
+// Byte 7 Bits 4,3,2,1,0 = daysInMonth 
+// Byte 8 = currentMonth
+// Byte 9 = currentYear (since 2000)
+// Byte 10 Bits 7,6 = Filter2Mode
+// Byte 10 Bits 5,4 = HeatModeState
+// Byte 10 Bits 3,2,1,0 = SpaState (values of 1,2,8,9 or 10 get forced to -1)
+// Byte 11 = errorCode 
+//   If errorCode value = 21 and TabActivityClass.modalval == 1 then erroCode gets forced to 0
+//   If erroCode value is 4,5,6,7,8,9,10 or 14, then errorCode gets forced to -1
+*// Byte 7 = ActualTemperature (not byte 12; may be set to 255 or div by 2 if Celsius scale)
+// Byte 13 = don't care?
+// Byte 14 = SetTemperature
+// Byte 15 Bits 7,6 = Pump3State
+// Byte 15 Bits 6,5 = Pump2State (bit posn off by 1??)
+// Byte 15 Bits 4,3,2 = Pump1State
+// Byte 15 Bits 2,1,0 read but not used
+// Byte 16 Bits 6,5 = IsSecondaryON
+// Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??)
+// Byte 16 Bits 4,3 = IsBlowerON (Bit posn off by 1??)
+// Byte 16 Bits 2,1 = IsUVON
+// Byte 17 = don't care?
+// Byte 18 Bits 2,1 = Is24HourTime (12 hr only if both bits are 0)
+*// Byte 14 Bit 0 = TemperatureScale (Degrees F only if bit is 0 -- instead of byte 18)
+*// Byte 14 Bit 7,6,5,4 = Filter mode 
+// Byte 19 = don't care?
+// Byte 20 Bits 4,3 = settingLock
+// Byte 20 Bits 2,1 = accessLock
+// Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
+// Byte 21 = don't care?
+// Byte 22 = don't care?
+// Byte 23 = don't care?
+// Byte 24 = CLEARRAYLSB 
+*// Byte 25 = TargetTemperature with same div by 2.0 if Celsius scale (not byte 14)CLEARRAYMSB
+// Byte 26 = WATERLSB
+// Byte 27 = WATERMSB
+// The following bytes may not be present
+// Byte 28 = OUTERFILTERLSB
+// Byte 29 = OUTERFILTERMSB
+// The following bytes may not be present
+// Byte 30 = INNERFILTERLSB
+// Byte 31 = INNERFILTERMSB
+// The following byte may not be present
+// Byte 32 Bits 7,6,5,4 = WiFiState
+//   0 = SpaWifiState.Unknown
+//   1 = SpaWifiState.SoftAPmodeUnavailable
+//   2 = SpaWifiState.SoftAPmodeAvailable
+//   3 = SpaWifiState.InfrastructureMode
+//   4 = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud
+//   5 = SpaWifiState.InfrastructureModeConnectedToNeworkCloud;
+//   14 = SpaWifiState.LINKINGTONETWORK;
+//   15 = SpaWifiState.NOTCOMMUNICATINGTOSPA;
+//
+  public static SpaControlState ParsePanelUpdatee(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) { // Value defaults to 0; never changes?
+      float f;
+      SpaControlState.CurrentTimeHour = paramArrayOfbyte[8];
+      SpaControlState.CurrentTimeMinute = paramArrayOfbyte[9];
+      byte b1 = paramArrayOfbyte[14];
+      if ((b1 & 0x1) == 0) {
+        SpaControlState.TemperatureScale = TemperatureScale.Farenheit;
+      } else {
+        SpaControlState.TemperatureScale = TemperatureScale.Celsius;
+      } 
+      byte b2 = paramArrayOfbyte[7];
+      if (b2 == 255) {
+        SpaControlState.ActualTemperature = b2;
+      } else {
+        if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+          f = b2;
+        } else {
+          f = b2 / 2.0F;
+        } 
+        SpaControlState.ActualTemperature = f;
+      } 
+      b2 = paramArrayOfbyte[25];
+      if (SpaControlState.TemperatureScale == TemperatureScale.Farenheit) {
+        f = b2;
+      } else {
+        f = b2 / 2.0F;
+      } 
+      SpaControlState.TargetTemperature = f;
+      int i = b1 & 0xC;
+      if (i == 0) {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } else if (i == 4) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1;
+      } else if (i == 12) {
+        SpaControlState.FilterMode = FilterMode.FILTER_1_2;
+      } else if (i == 8) {
+        SpaControlState.FilterMode = FilterMode.FILTER_2;
+      } else {
+        SpaControlState.FilterMode = FilterMode.FILTER_OFF;
+      } 
+      i = paramArrayOfbyte[15];
+      if ((i & 0x4) == 4) {
+        SpaControlState.TemperateRange = TemperatureRange.High;
+      } else {
+        SpaControlState.TemperateRange = TemperatureRange.Low;
+      } 
+      b2 = paramArrayOfbyte[19];
+      if ((b2 & 0x3) == 0) {
+        SpaControlState.Light1On = false;
+      } else {
+        SpaControlState.Light1On = true;
+      } 
+      if ((b2 & 0xC) == 0) {
+        SpaControlState.Light2On = false;
+      } else {
+        SpaControlState.Light2On = true;
+      } 
+      b2 = paramArrayOfbyte[10];
+      if (b2 == 0) {
+        SpaControlState.HeatMode = HeatMode.Ready;
+      } else if (b2 == 1) {
+        SpaControlState.HeatMode = HeatMode.Rest;
+      } else if (b2 == 2) {
+        SpaControlState.HeatMode = HeatMode.ReadyInRest;
+      } else {
+        SpaControlState.HeatMode = HeatMode.None;
+      } 
+      i &= 0x30;
+      b2 = paramArrayOfbyte[16];
+      int j = b2 & 0x3;
+      if (j == 1) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.LowHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.Low;
+        } 
+      } else if (j == 2) {
+        if (i != 0 && !SpaController.HasPump0) {
+          SpaControlState.Pump1State = PumpState.HighHeat;
+        } else {
+          SpaControlState.Pump1State = PumpState.High;
+        } 
+      } else {
+        SpaControlState.Pump1State = PumpState.Off;
+      } 
+      j = b2 & 0xC;
+      if (j == 4) {
+        SpaControlState.Pump2State = PumpState.Low;
+      } else if (j == 8) {
+        SpaControlState.Pump2State = PumpState.High;
+      } else {
+        SpaControlState.Pump2State = PumpState.Off;
+      } 
+      j = b2 & 0x30;
+      if (j == 16) {
+        SpaControlState.Pump3State = PumpState.Low;
+      } else if (j == 32) {
+        SpaControlState.Pump3State = PumpState.High;
+      } else {
+        SpaControlState.Pump3State = PumpState.Off;
+      } 
+      j = b2 & 0xC0;
+      if (j == 64) {
+        SpaControlState.Pump4State = PumpState.Low;
+      } else if (j == 128) {
+        SpaControlState.Pump4State = PumpState.High;
+      } else {
+        SpaControlState.Pump4State = PumpState.Off;
+      } 
+      j = paramArrayOfbyte[17];
+      int k = j & 0x3;
+      if (k == 1) {
+        SpaControlState.Pump5State = PumpState.Low;
+      } else if (k == 2) {
+        SpaControlState.Pump5State = PumpState.High;
+      } else {
+        SpaControlState.Pump5State = PumpState.Off;
+      } 
+      k = j & 0xC;
+      if (k == 4) {
+        spaControlState.Pump6State = PumpState.Low;
+      } else if (k == 8) {
+        spaControlState.Pump6State = PumpState.High;
+      } else {
+        spaControlState.Pump6State = PumpState.Off;
+      } 
+      k = paramArrayOfbyte[18];
+      int m = k & 0xC;
+      if (m == 4) {
+        SpaControlState.BlowerState = BlowerState.Low;
+      } else if (m == 8) {
+        SpaControlState.BlowerState = BlowerState.Medium;
+      } else if (m == 12) {
+        SpaControlState.BlowerState = BlowerState.High;
+      } else {
+        SpaControlState.BlowerState = BlowerState.Off;
+      } 
+      m = paramArrayOfbyte[20];
+      if ((m & 0x1) == 0) {
+        SpaControlState.MisterOn = false;
+      } else {
+        SpaControlState.MisterOn = true;
+      } 
+      if ((m & 0x8) == 0) {
+        SpaControlState.Aux1On = false;
+      } else {
+        SpaControlState.Aux1On = true;
+      } 
+      if ((m & 0x10) == 0) {
+        SpaControlState.Aux2On = false;
+      } else {
+        SpaControlState.Aux2On = true;
+      } 
+      if (b2 >= 1 || j >= 1 || (k & 0x3) >= 1) {
+        if (i == 0) {
+          spaControlState.PumpStateStatus = PumpState.Low;
+        } else {
+          spaControlState.PumpStateStatus = PumpState.LowHeat;
+        } 
+      } else {
+        spaControlState.PumpStateStatus = PumpState.Off;
+      } 
+      i = paramArrayOfbyte[27];
+    } 
+    return spaControlState;
+  }
+  
+  //
+  // Parse a SystemInformation message packet. This just reads byte 7 of the message packet and if the value there
+  // is less than 6, it sets spaSystemInformation.isOldVersion = true, or false otherwise. The Prolink app code then
+  // sends this SpaSystemInformation object to the parent process.
+  //
+  public static SpaSystemInformation ParseSystemInformation(byte[] paramArrayOfbyte) {
+    SpaSystemInformation spaSystemInformation = new SpaSystemInformation();
+    spaSystemInformation.isOldVersion = false;
+    if (paramArrayOfbyte[7] < 6)
+      spaSystemInformation.isOldVersion = true; 
+    return spaSystemInformation;
+  }
+  
+  //
+  // Parse a Primary Filtration message packet. This just reads bytes 5 and 6 of the message packet and saves those
+  // values to the SpaControlState object. Oddly, nothing is ever done with that result though.
+  //
+  public static SpaControlState PrimaryFiltration(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      byte b1 = paramArrayOfbyte[5];               // Byte 5 = StartTimeHour
+      byte b2 = paramArrayOfbyte[6];               // Byte 6 = EndTimeHour
+      if (b1 >= 0)
+        SpaControlState.StartTimeHour = b1; 
+      if (b2 >= 0)
+        SpaControlState.EndTimeHour = b2; 
+    } 
+    return spaControlState;
+  }
+  
+  //
+  // Parse a PumpState message type.  This just reads the 6 upper bits of Byte 11 of the message packet, counts the number
+  // of pumps present, and saves that to the SpaControlState object. Oddly, nothing is ever done with that result though.
+  //
+  public static SpaControlState Pupmpstateparsing(byte[] paramArrayOfbyte) {
+    SpaControlState spaControlState = new SpaControlState();
+    if (TabActivityClass.Value != 100) {
+      int i = 1;
+      String str2 = String.format("%8s", new Object[] { Integer.toBinaryString(paramArrayOfbyte[11] & 0xFF) }).replace(' ', '0');
+      String str1 = str2.substring(0, 2);               // Byte 11 Bits 7,6
+      String str3 = str2.substring(2, 4);               // Byte 11 Bits 5,4
+      str2 = str2.substring(4, 6);                      // Byte 11 Bits 3,2
+      if (str1.equals("00"))
+        i = 0; 
+      int j = i;
+      if (!str3.equals("00"))
+        j = i + 1; 
+      i = j;
+      if (!str2.equals("00"))
+        i = j + 1; 
+      SpaControlState.NumberofPump = i;
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Number of pumps = ");
+      stringBuilder.append(SpaControlState.NumberofPump);
+      Log.i("SPA_CONTROL_STATE", stringBuilder.toString());
+    } 
+    return spaControlState;
+  }
+}
+
+----
+
+// These are the panel requests supported by Prolink
+
+public enum PanelRequestType {
+  DeviceConfiguration, FilterCycles, PrimaryFiltration, PupmpState, SetupParameters, SystemInfo;
+  
+  static {
+    FilterCycles = new PanelRequestType("FilterCycles", 1);
+    SetupParameters = new PanelRequestType("SetupParameters", 2);
+    DeviceConfiguration = new PanelRequestType("DeviceConfiguration", 3);
+    PrimaryFiltration = new PanelRequestType("PrimaryFiltration", 4);
+    PupmpState = new PanelRequestType("PupmpState", 5);
+    $VALUES = new PanelRequestType[] { SystemInfo, FilterCycles, SetupParameters, DeviceConfiguration, PrimaryFiltration, PupmpState };
+  }
+}
+
+---------------------------------------------------------------------------------------------
+
+// This is the Prolink app class that communicates with the Prolink module in the hot tub
+
+public class SocketListenerThread extends Thread {
+  private static final String TAG = "SocketListener";
+  
+  public static WifiSocketState currentState;
+  
+  public static Boolean isPacketget = Boolean.valueOf(false);
+  
+  private int DISCOVERY_PORT = 30303;
+  
+  private String HOST_IP;
+  
+  private String HOST_IP_ADHOC;
+  
+  private String HOST_IP_SOFT_AP;
+  
+  private String HOST_NAME = "JHTSpa.local";
+  
+  private int MAIN_PORT = 4257;
+  
+  public Socket clientSocket;
+  
+  private final Context context;
+  
+  private boolean foundAddress;
+  
+  public Boolean hasConnectionBeenEstablished = Boolean.valueOf(false);
+  
+  public DataInputStream inToServer;
+  
+  private byte[] inputBuffer;
+  
+  ByteArrayList inputBufferList = new ByteArrayList();
+  
+  public Boolean isConnecting = Boolean.valueOf(false);
+  
+  public Boolean isInitialized = Boolean.valueOf(false);
+  
+  private boolean isOutputPending;
+  
+  private JmDNS jmdns = null;
+  
+  private ServiceListener listener = null;
+  
+  WifiManager.MulticastLock lock;
+  
+  private Handler myThreadHandler;
+  
+  public DataOutputStream outToServer;
+  
+  private byte[] outputBuffer;
+  
+  private int outputCommandLength = 0;
+  
+  private Handler parentHandler;
+  
+  private ServiceInfo serviceInfo;
+  
+  private String serviceName = "DemoWebServer";
+  
+  public volatile boolean stopped;
+  
+  private String type = "_http._tcp.local.";
+  
+  public SocketListenerThread(Handler paramHandler, Context paramContext) {
+    this.parentHandler = paramHandler;
+    this.context = paramContext;
+    currentState = WifiSocketState.NotConnected;
+    Log.i("SocketListener", "Creating Socket Listener");
+  }
+  
+  private void ConnectSocket(String paramString) {
+    if (!this.stopped) {
+      if (this.clientSocket != null && this.clientSocket.isConnected())
+        return; 
+      try {
+        StringBuilder stringBuilder = new StringBuilder();
+        this();
+        stringBuilder.append("Trying to connect to ");
+        stringBuilder.append(paramString);
+        Log.i("SocketListener", stringBuilder.toString());
+        this.isConnecting = Boolean.valueOf(true);
+        if (paramString != null) {
+          if (!checkConnectedToSpa()) {
+            this.clientSocket = null;
+            Socket socket1 = new Socket();
+            this();
+            this.clientSocket = socket1;
+            Socket socket2 = this.clientSocket;
+            InetSocketAddress inetSocketAddress = new InetSocketAddress();
+            this(paramString, this.MAIN_PORT);
+            socket2.connect(inetSocketAddress, 4257);
+          } else {
+            this.clientSocket = null;
+            Socket socket = new Socket();
+            this();
+            this.clientSocket = socket;
+            socket = this.clientSocket;
+            InetSocketAddress inetSocketAddress = new InetSocketAddress();
+            this(paramString, this.MAIN_PORT);
+            socket.connect(inetSocketAddress, 4257);
+          } 
+          try {
+            DataOutputStream dataOutputStream = new DataOutputStream();
+            this(this.clientSocket.getOutputStream());
+            this.outToServer = dataOutputStream;
+            DataInputStream dataInputStream = new DataInputStream();
+            this(this.clientSocket.getInputStream());
+            this.inToServer = dataInputStream;
+            Log.i("SocketListener", "Socket created, Streams assigned");
+          } catch (IOException iOException) {
+            Log.e("SocketListener", "Cannot assign Streams, Socket not connected");
+            iOException.printStackTrace();
+          } 
+        } 
+        this.isConnecting = Boolean.valueOf(false);
+      } catch (Exception exception) {
+        StringBuilder stringBuilder = new StringBuilder();
+        this();
+        stringBuilder.append("Error creating socket ");
+        stringBuilder.append(exception.toString());
+        Log.e("SocketListener", stringBuilder.toString());
+        this.isConnecting = Boolean.valueOf(false);
+        this.isConnecting = Boolean.valueOf(false);
+      } finally {}
+      Log.i("SocketListener", "In try statement");
+      if (this.clientSocket != null) {
+        Log.i("SocketListener", "Socket is not null");
+        if (this.clientSocket.isConnected()) {
+          currentState = WifiSocketState.Connected;
+          this.isInitialized = Boolean.valueOf(true);
+          ConnectingSpa.IP = paramString;
+          LoginScreen.IP = paramString;
+          Log.i("SocketListener", "Socket is connected");
+        } else {
+          Log.e("SocketListener", "Cannot assign Streams, Socket is closed");
+        } 
+      } else {
+        Log.e("SocketListener", "Socket is null");
+      } 
+    } 
+  }
+  
+  private void LookupIPByDNS() {
+    this.foundAddress = false;
+    try {
+      setUp();
+      String str = "";
+      if (!this.foundAddress) {
+        InetAddress[] arrayOfInetAddress = InetAddress.getAllByName(this.HOST_NAME);
+        if (arrayOfInetAddress.length > 0)
+          str = arrayOfInetAddress[0].getHostAddress(); 
+        if (str != null && str != "" && !str.startsWith("0.")) {
+          this.foundAddress = true;
+          this.HOST_IP = str;
+        } 
+      } 
+    } catch (Exception exception) {
+      Log.e("Balboa", "Exception looking up IP from name", exception);
+      Log.i("Balboa", "Cannot lookup host from name");
+    } 
+  }
+  
+  private void LookupIPByNETBIOS() {
+    try {
+      String str = NbtAddress.getByName(this.HOST_NAME).getInetAddress().getHostAddress();
+      if (str != "" && str != null && !str.startsWith("0."))
+        this.HOST_IP = str; 
+    } catch (Exception exception) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("NETBIOS: Exception looking up IP from NbtAddress");
+      stringBuilder.append(exception.toString());
+      Log.e("SocketListener", stringBuilder.toString());
+      Log.i("SocketListener", "NETBIOS: Cannot lookup host from name");
+    } 
+  }
+  
+  private void LookupIPByUDPBroadcast() {
+    if (this.clientSocket != null && this.clientSocket.isConnected())
+      return; 
+    try {
+      Log.i("SocketListener", "Looking up IP from UDP broadcast");
+      ((WifiManager)this.context.getSystemService("wifi")).createMulticastLock("dk.aboaya.pingpong").acquire();
+      DatagramSocket datagramSocket = new DatagramSocket();
+      this((SocketAddress)null);
+      datagramSocket.setReuseAddress(true);
+      datagramSocket.setBroadcast(true);
+      InetSocketAddress inetSocketAddress = new InetSocketAddress();
+      this(30300);
+      datagramSocket.bind(inetSocketAddress);
+      datagramSocket.setSoTimeout(10000);
+      DatagramPacket datagramPacket2 = new DatagramPacket();
+      this("Discovery: Who is out there?".getBytes(), "Discovery: Who is out there?".length(), getBroadcastAddress(), this.DISCOVERY_PORT);
+      byte[] arrayOfByte = new byte[4096];
+      DatagramPacket datagramPacket1 = new DatagramPacket();
+      this(arrayOfByte, arrayOfByte.length);
+      datagramSocket.send(datagramPacket2);
+      long l = System.currentTimeMillis();
+      if (System.currentTimeMillis() - l < 10000L) {
+        Log.i("SocketListener", "In the Loop");
+        try {
+          datagramSocket.receive(datagramPacket1);
+          String str = wifiIpAddress(this.context);
+          if (!str.equalsIgnoreCase(datagramPacket1.getAddress().getHostAddress())) {
+            this.HOST_IP = datagramPacket1.getAddress().getHostAddress();
+            this.foundAddress = true;
+            ConnectSocket(this.HOST_IP);
+            StringBuilder stringBuilder3 = new StringBuilder();
+            this();
+            stringBuilder3.append("MyIP is ");
+            stringBuilder3.append(str);
+            Log.i("SocketListener", stringBuilder3.toString());
+            StringBuilder stringBuilder2 = new StringBuilder();
+            this();
+            stringBuilder2.append("Found IP: ");
+            stringBuilder2.append(this.HOST_IP);
+            Log.i("SocketListener", stringBuilder2.toString());
+            String str1 = new String();
+            this(datagramPacket1.getData(), "UTF-8");
+            StringBuilder stringBuilder1 = new StringBuilder();
+            this();
+            stringBuilder1.append("Pakcket Data: ");
+            stringBuilder1.append(str1);
+            Log.i("SocketListener", stringBuilder1.toString());
+            SpaController.SaveDigiDeviceIdentifier(str1, this.context);
+          } else {
+            Log.i("SocketListener", "Found my own IP");
+          } 
+        } catch (SocketTimeoutException socketTimeoutException) {
+          StringBuilder stringBuilder1 = new StringBuilder();
+          this();
+          stringBuilder1.append("Timeout Exception: ");
+          stringBuilder1.append(socketTimeoutException.toString());
+          Log.e("SocketListener", stringBuilder1.toString());
+        } 
+      } 
+      datagramSocket.close();
+      StringBuilder stringBuilder = new StringBuilder();
+      this();
+      stringBuilder.append("Found IP Address from UDP Broadcast: ");
+      stringBuilder.append(this.HOST_IP);
+      Log.i("SocketListener", stringBuilder.toString());
+    } catch (Exception exception) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("UDP: Cannot lookup host from name: ");
+      stringBuilder.append(exception.toString());
+      Log.e("SocketListener", stringBuilder.toString());
+    } 
+  }
+  
+  private void SendNetworkPacket(byte[] paramArrayOfbyte) {
+    if (!this.isInitialized.booleanValue())
+      initializeSocket(); 
+    try {
+      StringBuilder stringBuilder = new StringBuilder();
+      this();
+      stringBuilder.append("output stream length before------------------------------ ");
+      stringBuilder.append(this.outToServer.size());
+      Log.i("SocketListener", stringBuilder.toString());
+      this.outToServer.write(paramArrayOfbyte, 0, this.outputCommandLength);
+      this.outToServer.flush();
+    } catch (IOException iOException) {
+      Log.i("SocketListener", "Cannot send data");
+    } 
+  }
+  
+// Verify that the first byte of the 3 byte message type (the "address" byte) is either 0x0A or 0xFF
+// Therefore every valid message packet in a Prolink system must have 0x0A or 0xFF as the first message type byte
+//
+// This also rejects any messsage packet that is less than 4 bytes long (including 0x7E header and footer bytes)
+// Thus the minimum possible message consists of a header byte, length byte, address byte, checksum byte, and footer byte
+
+  private boolean checkAddress(byte[] paramArrayOfbyte) {
+    if (paramArrayOfbyte.length < 4)
+      return false; 
+    byte b = paramArrayOfbyte[2];
+    return !(b != 10 && b != -1);
+  }
+  
+// Verify the checksum byte in the message packet
+// Surprisingly, this does not check anything at all; in all cases it simply returns true (!)
+
+  private boolean checkChecksum(byte[] paramArrayOfbyte) {
+    return true;
+  }
+
+  //
+  // Returns true if connected to a wifi server (aka access point) with an SSID that contains "JHTSPA" or "SDSSPA" (Jacuzzi or Sundance)
+  // This should only be true during the initial wifi configuration. After wifi is setup, the hot tub becomes a wifi client
+  // that connects to the user's local network via the local network's wifi server.
+  //
+  private boolean checkConnectedToSpa() {
+    String str = ((WifiManager)this.context.getSystemService("wifi")).getConnectionInfo().getSSID();
+    return (str.toUpperCase().contains("JHTSPA") || str.toUpperCase().contains("SDSSPA"));
+  }
+  
+  // This method does the initial message parsing to figure out which type of packet came in
+
+  private boolean checkForIncomingData() {
+    boolean bool3;                                               // bool3 = a temp flag
+    boolean bool1 = true;                                        // bool1 = another flag
+    boolean bool2 = true;                                        // bool2 = a third flag
+    try {
+
+      // packets can never be more than 256 bytes long
+
+      if (this.inputBufferList.length() > 256)
+        this.inputBufferList.removeAll(); 
+
+      //
+      // Read any incoming bytes into the inputBuffer
+      //
+      int i = this.inToServer.read(this.inputBuffer);            // i = total bytes read
+      if (i > 0) {
+        this.inputBufferList.add(this.inputBuffer, 0, i);        // Transfer the new bytes to the inputBufferList
+        try {
+          if (!this.hasConnectionBeenEstablished.booleanValue()) {           // If connection was down
+            this.hasConnectionBeenEstablished = Boolean.valueOf(true);       // We got some bytes so connection must be established
+            sendMessageToParent(PacketType.ConnectionEstablished, null, 0);  // Tell the thread parent (parameter "0" will be message.what)
+          } 
+          byte[] arrayOfByte = this.inputBufferList.getArray(); // Get a local copy of the bytes we just read
+          i = 0;                                                // i = byte counter
+          byte b = -1;                                          // b will be index to start of message packet (-1 => start not found yet)
+          int j = -2;                                           // j will be length of current packet?
+          while (true) {
+            bool3 = bool1;                                      // reset temp flag
+            if (i < arrayOfByte.length) {                       // if not done with these bytes
+              byte b2;
+              int k;                                            // get a new temp variable k
+              byte b1 = arrayOfByte[i];                         // Read current byte into b1
+              if (b == -1 && b1 == 126) {                       // If this is start of message packet (126 = 0x7E)
+                b2 = i;                                         // b2 = index to start of message packet
+                k = -1;                                         // k will be length of complete message packet
+              } else {                                          // else not the start of a message packet
+                b2 = b;                                         // b2 = copy of offset to start of message packet
+                k = j;                                          // set k to the length of current packet 
+                if (j == -1) {                                  // if we have not yet found end of current packet?
+                  b2 = b;                                       // b2 = copy of offset to start of message packet
+                  k = j;                                        // set k = -1 to signal end of packet not found
+                  if (b1 == 126) {                              // if current byte is end of packet (0x7E)
+                    k = i - b + 1;                              // k now is length of complete message packet
+                    byte[] arrayOfByte1 = new byte[k];          // arrayOfByte1[] will hold complete packet
+                    System.arraycopy(arrayOfByte, b, arrayOfByte1, 0, k);  // copy packet into arrayOfByte1[]
+
+                    // Confirm that the message packet starts and ends with 0x7E, has 0x0A or 0xFF in byte position 2
+                    // (the "Address" byte) and 0xAF or 0xBF in byte position 3 (the "PF" byte). The checksum test
+                    // actually does nothing at all
+
+                    if (checkHeaderAndFooter(arrayOfByte1) && checkAddress(arrayOfByte1) && checkPF(arrayOfByte1) && checkChecksum(arrayOfByte1)) {
+
+                      // Looks like a valid message packet; parse it by message packet type
+
+                      SpaControlState spaControlState;
+                      PacketType packetType = getPacketType(arrayOfByte1);
+                      this.inputBufferList.remove(0, i);         // Remove these packet bytes from the incoming data buffer
+                      switch (packetType) {
+                        case Pupmpstateparsing:
+                          PacketParser.Pupmpstateparsing(arrayOfByte1);
+                          break;
+                        case Primaryfiltration:
+                          PacketParser.PrimaryFiltration(arrayOfByte1);
+                          break;
+                        case ModuleIdentification:
+                          sendMessageToParent(packetType, PacketParser.ParseModuleIdentication(arrayOfByte1), 0);
+                          break;
+                        case FilterCycleInfo:
+                          Log.d("SocketListener", "Filter Cycle Info");
+                          sendMessageToParent(packetType, PacketParser.ParseFilterCycle(arrayOfByte1), 0);
+                          break;
+                        case SystemInformation:
+                          sendMessageToParent(packetType, PacketParser.ParseSystemInformation(arrayOfByte1), 0);
+                          break;
+                        case DeviceConfiguration:
+                          sendMessageToParent(packetType, PacketParser.ParseDeviceConfiguration(arrayOfByte1), 0);
+                          break;
+                        case PanelUpdate:
+                          Log.i("SocketListener", "Panel Update");
+                          spaControlState = PacketParser.ParsePanelUpdate(arrayOfByte1);
+                          isPacketget = Boolean.valueOf(true);
+                          sendMessageToParent(packetType, spaControlState, 0);
+                          break;
+                      } 
+                    } 
+                    k = i;
+                    b2 = b;
+                  } 
+                } 
+              } 
+              i++;
+              b = b2;
+              j = k;
+              continue;
+            } 
+            break;
+          } 
+          return bool3;
+        } catch (IOException iOException) {
+          bool3 = bool2;
+        } 
+      } else {
+        return false;
+      } 
+    } catch (IOException iOException) {
+      bool3 = false;
+    } 
+    Log.i("SocketListener", "Error reading data");
+    return bool3;
+  }
+  
+  private void checkForOutgoingData() {
+    if (this.isOutputPending) {
+      SendNetworkPacket(this.outputBuffer);
+      this.isOutputPending = false;
+    } 
+  }
+
+// Make sure the message packet has both a leading and trailing 0x7E ("~")
+  
+  private boolean checkHeaderAndFooter(byte[] paramArrayOfbyte) {
+    if (paramArrayOfbyte == null)
+      return false; 
+    if (paramArrayOfbyte.length == 0)
+      return false; 
+    byte b1 = paramArrayOfbyte[0];
+    byte b2 = paramArrayOfbyte[paramArrayOfbyte.length - 1];
+    return !(b1 != 126 || b2 != 126);
+  }
+  
+// Checks byte 3 of the message packet (2nd byte of 3 byte message type ID)
+// Therefore all valid message types in a Prolink system must have 0xAF or 0xBF in the second byte position
+
+  private boolean checkPF(byte[] paramArrayOfbyte) {
+    byte b = paramArrayOfbyte[3];
+    return !(b != -81 && b != -65);  // -81 = 0xAF -65 = 0xBF
+  }
+  
+  private void closeSocket() {
+    try {
+      if (this.outToServer != null)
+        this.outToServer.close(); 
+      if (this.inToServer != null)
+        this.inToServer.close(); 
+      if (this.clientSocket != null) {
+        Log.i("SocketListener", "Closing Socket");
+        this.clientSocket.close();
+      } 
+    } catch (IOException iOException) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Error closing socket - ");
+      stringBuilder.append(iOException);
+      Log.e("SocketListener", stringBuilder.toString());
+    } 
+  }
+  
+  private InetAddress getBroadcastAddress() throws IOException {
+    return InetAddress.getByName("255.255.255.255");
+  }
+  
+ // Determine the message packet type from bytes 2,3 and 4 of a given message packet
+
+  private PacketType getPacketType(byte[] paramArrayOfbyte) {
+    byte b = paramArrayOfbyte[4];
+    if (b != -108) {                                       // 0x94 => ModuleIdentification
+      if (b != 22) {                                       // 0x16 => PanelUpdate
+        if (b != 27) {                                     // 0x1B => Primaryfiltration
+          if (b != 29) {                                   // 0x1D => Pumpstateparsing
+            if (b != 39) {                                 // 0x27 => FilterCycleInfo
+              if (b != 46) {                               // 0x2E => DeviceConfiguration
+                switch (b) {
+                  default:
+                    return PacketType.Unknown;
+                  case 37:                                 // 0x25 => SetupParameters
+                    return PacketType.SetupParameters;
+                  case 36:                                 // 0x24 => SystemInformation
+                    break;
+                } 
+                return PacketType.SystemInformation;
+              } 
+              return PacketType.DeviceConfiguration;       // 0x2E => DeviceConfiguration
+            }
+
+                                                           // 0x27 => FilterCycleInfo
+            // Write the packet data to the debug log
+
+            Log.d("incoming data", Utility.bytesToHex(this.inputBuffer));
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("");
+            stringBuilder.append(paramArrayOfbyte[4]);     // paramArrayOfbyte[4] = 0x27 = 39
+            Log.e("Packet Type Update", stringBuilder.toString());
+            return PacketType.FilterCycleInfo;
+          } 
+          return PacketType.Pupmpstateparsing;             // 0x1D => Pumpstateparsing
+        } 
+        return PacketType.Primaryfiltration;               // 0x1B => Primaryfiltration
+      } 
+      return PacketType.PanelUpdate;                       // 0x16 => PanelUpdate
+    } 
+    return PacketType.ModuleIdentification;                // 0x94 => ModuleIdentification
+  } 
+  
+  private void initializeSocket() {
+    Log.i("SocketListener", "initializeSocket begin");
+    currentState = WifiSocketState.Connecting;
+    this.inputBuffer = new byte[255];
+    this.outputBuffer = new byte[255];
+    this.foundAddress = false;
+    if (currentState != WifiSocketState.Connected)
+      LookupIPByUDPBroadcast(); 
+    if (currentState != WifiSocketState.Connected) {
+      LookupIPByUDPBroadcast();
+      if (this.HOST_IP != null)
+        ConnectSocket(this.HOST_IP); 
+    } 
+  }
+
+// Send the entire message packet of paramPacketType to the parent object (?).  paramInt becomes message.what
+// message.what = 0 seems to tell the parent that this is the result of a parsed message packet of packetType
+
+  private void sendMessageToParent(PacketType paramPacketType, Serializable paramSerializable, int paramInt) {
+    Message message = new Message();
+    Bundle bundle = new Bundle();
+    message.what = paramInt;
+    bundle.putInt("packetType", paramPacketType.id);
+    if (paramSerializable != null)
+      bundle.putSerializable("state", paramSerializable); 
+    message.setData(bundle);
+    this.parentHandler.sendMessage(message);
+  }
+  //
+  // Setup a listener that will use mDNS (aka bonjour) to try to find the hostname of the spa. Note that logged info says 
+  // "Balboa" even though this app is for Jacuzzi spas.
+  //
+  private void setUp() {
+    this.lock = ((WifiManager)this.context.getSystemService("wifi")).createMulticastLock("mylockthereturn");
+    this.lock.setReferenceCounted(true);
+    this.lock.acquire();
+    try {
+      this.jmdns = JmDNS.create();
+      JmDNS jmDNS = this.jmdns;
+      String str = this.type;
+      ServiceListener serviceListener = new ServiceListener() {
+          public void serviceAdded(ServiceEvent param1ServiceEvent) {
+            SocketListenerThread.this.jmdns.requestServiceInfo(param1ServiceEvent.getType(), param1ServiceEvent.getName(), 1L);
+          }
+          
+          public void serviceRemoved(ServiceEvent param1ServiceEvent) {}
+          
+          public void serviceResolved(ServiceEvent param1ServiceEvent) {
+            if (param1ServiceEvent.getInfo().getInetAddresses() != null && (param1ServiceEvent.getInfo().getInetAddresses()).length > 0) {
+              String str = param1ServiceEvent.getInfo().getInetAddresses()[0].getHostAddress();
+              Log.i("Balboa", String.format("Discovered bonjour service %s", new Object[] { param1ServiceEvent.getName() }));
+              if (param1ServiceEvent.getName().equals(SocketListenerThread.this.serviceName)) {
+                SocketListenerThread.access$402(SocketListenerThread.this, str);
+                SocketListenerThread.access$502(SocketListenerThread.this, true);
+                if (SocketListenerThread.this.lock != null)
+                  SocketListenerThread.this.lock.release(); 
+              } 
+            } 
+          }
+        };
+      super(this);
+      this.listener = serviceListener;
+      jmDNS.addServiceListener(str, serviceListener);
+      return;
+    } catch (IOException iOException) {
+      iOException.printStackTrace();
+      return;
+    } 
+  }
+  
+  public void destroy() {
+    super.destroy();
+    Log.i("SocketListener", "Destroy SocketListener");
+  }
+  
+  public Handler getHandler() {
+    return this.myThreadHandler;
+  }
+  
+  public void interrupt() {
+    super.interrupt();
+    this.stopped = true;
+    closeSocket();
+    Log.i("SocketListener", "Thread interuppted");
+  }
+  //
+  // Run the SocketListener (aka "main socket thread loop"):
+  //
+  // Loop to wait for connection to become established and when it is process incoming and outgoing data.
+  // If after 100 tries there isn't any, assume the connection is down and try to reestablish it again.
+  // Continue doing this until the Socketlistener is stopped.
+  //
+  public void run() {
+    Looper.prepare();
+    this.myThreadHandler = new Handler() {
+        public void handleMessage(Message param1Message) {
+          StringBuilder stringBuilder = new StringBuilder();
+          stringBuilder.append("Handler ");
+          stringBuilder.append(param1Message.what);
+          Log.i("SocketListener", stringBuilder.toString());
+          if (param1Message.what == 0) {
+            Log.i("SocketListener", "Sending Message From Handler");
+            SocketListenerThread.access$002(SocketListenerThread.this, param1Message.getData().getByteArray("outgoingData"));
+            SocketListenerThread.access$102(SocketListenerThread.this, param1Message.getData().getInt("outgoingDataLength"));
+            SocketListenerThread.access$202(SocketListenerThread.this, true);
+          } 
+        }
+      };
+    Log.i("SocketListener", "Entered run sequence");
+    int i = 0;
+    try {
+      while (!this.stopped) {
+        if (this.isInitialized.booleanValue()) {
+          if (this.hasConnectionBeenEstablished.booleanValue()) {
+            if (currentState == WifiSocketState.Connected) {
+              int j = i + 1;
+              checkForOutgoingData();
+              if (checkForIncomingData())
+                j = 0; 
+              i = j;
+              if (j == 100) {
+                currentState = WifiSocketState.NotConnected;
+                i = 0;
+              } 
+              sleep(100L);
+              continue;
+            } 
+            this.isInitialized = Boolean.valueOf(false);
+            continue;
+          } 
+          Log.i("SocketListener", "Still waiting for connection to establish");
+          checkForIncomingData();
+          sleep(1000L);
+          continue;
+        } 
+        initializeSocket();
+        sleep(1000L);
+      } 
+    } catch (InterruptedException interruptedException) {
+      StringBuilder stringBuilder = new StringBuilder();
+      stringBuilder.append("Main socket thread loop exception - ");
+      stringBuilder.append(interruptedException);
+      Log.e("SocketListener", stringBuilder.toString());
+      closeSocket();
+    } 
+  }
+  
+  //
+  // Save the given data packet in the outputBuffer and flag the outgoing packet as pending
+  //
+  public void sendNetworkCommand(byte[] paramArrayOfbyte) {
+    this.outputBuffer = paramArrayOfbyte;
+    this.outputCommandLength = paramArrayOfbyte.length;
+    this.isOutputPending = true;
+  }
+  
+  //
+  // Get the spa's (aka host's) IP address, being careful to handle byte order of this app's processor
+  // Oddly, returns unknownHostException = null on failure, and unknownHostException on success (??)
+  // Assigns the IP address to str but then does not use it.
+  //
+  protected String wifiIpAddress(Context paramContext) {
+    int i = ((WifiManager)paramContext.getSystemService("wifi")).getConnectionInfo().getIpAddress();
+    int j = i;
+    if (ByteOrder.nativeOrder().equals(ByteOrder.LITTLE_ENDIAN))
+      j = Integer.reverseBytes(i); 
+    byte[] arrayOfByte = BigInteger.valueOf(j).toByteArray();
+    try {
+      String str = InetAddress.getByAddress(arrayOfByte).getHostAddress();
+    } catch (UnknownHostException unknownHostException) {
+      Log.e("SocketListener", "Unable to get host address.");
+      unknownHostException = null;
+    } 
+    return (String)unknownHostException;
+  }
+}
+
+---------------
+
+// JD_GUI was not able to decompile WifiCommunicator.SendPanelRequest(). This was the decompiled output of the online Procyon
+// decompiler from www.javadecompilers.com
+//
+// Panel request types: (from PanelRequestType enum class)
+//
+// 0 = "SystemInfo"
+// 1 = "FilterCycles"
+// 2 = "SetupParameters"
+// 3 = "DeviceConfiguration"
+// 4 = "PrimaryFiltration"
+// 5 = "PupmpState"
+//
+
+ @Override
+    public void SendPanelRequest(final PanelRequestType panelRequestType) {
+
+        int n = 0;  // when n = 0, payload1 = n2 and payload2 = n3
+        int n2 = 0; // default value for payload1
+        int n3 = 0; // default value for payload2
+
+        Label_0109: {
+            Label_0052: {
+
+                // The switch case values seem to be off by one! 
+
+                switch (WifiCommunicator$1.$SwitchMap$and$app$jacuzzilive$PanelRequestType[panelRequestType.ordinal()]) {
+                    default: { // unrecognized panel request type -- will go send a 7 byte packet with both payload bytes = 0x00
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        break;
+                    }
+                    case 6: {  // 5 = "PupmpState" ??
+                        n = 5; // n is not 0 or 1, so ignore n2 and n3; payload1 = 16, payload2 = 0
+                        break;
+                    }
+                    case 5: {  // 4 = "PrimaryFiltration" ??
+                        n = 1; // n = 1 so ignore n2 and n3; payload1 = 1, payload2 = 0
+                        break;
+                    }
+                    case 4: {  // 3 = "DeviceConfiguration" ??
+                        Log.i("Balboa", "Requesting device config");
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 0;
+                        n3 = 1;
+                        break Label_0109; // go use the value of n to create a message packet of the correct size
+                    }
+                    case 3: {  // 2 = "SetupParameters" ??
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 4;
+                        break Label_0052; // go set n3 = 0
+                    }
+                    case 2: {  // 1 = "FilterCycles"
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 1;
+                        break Label_0052; // go set n3 = 0
+                    }
+                    case 1: {  // 0 = "SystemInfo"
+                        n = 0; // n = 0 so payload1 = n2 and payload2 = n3
+                        n2 = 2;
+                        break Label_0052; // go set n3 = 0
+                    }
+                }
+                n2 = 0;
+            }
+            // End of Label_0052 block
+            n3 = 0;
+        }
+
+        // End of Label_0109 block
+        // Now use the value of n to create a message packet of the correct size
+
+        if (n == 0) {
+
+            // Message packet type = 0x19 = 25 (??); n2 and n3 are the payload bytes
+            // Most Packet Request message types end up here
+            // Should be a 7 byte packet
+
+            final byte[] array = { 126, 25, (byte)n2, (byte)n3, 0, 126 }; // Packet seems to be missing the length byte!
+            array[3] = Utility.CalculateChecksum(array, 2, true);// Checksum only includes 2 bytes & is written to wrong byte!
+            this.SendCommand(array);
+        }
+        else if (n == 1) {   // Only when panel request type = 4 = "PrimaryFiltration" ??
+
+            // 9 byte message packet
+
+            final byte[] array3;
+            final byte[] array2 = array3 = new byte[9]; // array3[] gets set up, but array2[] gets sent!
+            array3[0] = 126;
+            array3[1] = 7;
+            array3[2] = 10;
+            array3[3] = -65;
+            array3[4] = 25;  // message packet type = 0x19 = 25
+            array3[5] = 1;   // payload1 = 1
+            array3[6] = 0;   // payload2 = 0
+            array3[7] = -107;
+            array3[8] = 126;
+            array2[7] = Utility.CalculateChecksum(array2, 6, true); // Checksum written to wrong array??
+            this.SendCommand(array2);                               // sending array2[] not array3[]
+        
+        else {  // Only when panel request type = 5 = "PupmpState" ??
+
+            // also a 9 byte message packet 
+
+            final byte[] array5;
+            final byte[] array4 = array5 = new byte[9];
+            array5[0] = 126;
+            array5[1] = 7;
+            array5[2] = 10;
+            array5[3] = -65;
+            array5[4] = 25;  // message packet type = 0x19 = 25 
+            array5[5] = 16;  // payload1 = 16 = 0x10
+            array5[6] = 0;   // payload2 = 0 = 0x00
+            array5[7] = -107;
+            array5[8] = 126;
+            array4[7] = Utility.CalculateChecksum(array4, 6, true);
+            this.SendCommand(array4);                               // sending array4[] not array5[]
+        }
+    }
+   
+---------------
+
+  public void ConnectToWifi(ConnectionMethod paramConnectionMethod, SecurityType paramSecurityType, String paramString1, String paramString2) {
+    byte[] arrayOfByte1 = paramString1.getBytes();  // paramstring1 = SSID
+    byte[] arrayOfByte3 = paramString2.getBytes();  // paramstring2 = (optional) SSID password
+    byte[] arrayOfByte2 = new byte[107];
+    arrayOfByte2[0] = (byte)126;
+    arrayOfByte2[1] = (byte)105;
+    arrayOfByte2[2] = (byte)10;
+    arrayOfByte2[3] = (byte)-65;
+    arrayOfByte2[4] = (byte)-110;
+    arrayOfByte2[5] = (byte)(byte)paramConnectionMethod.id;  // id = 0 for Open, 2 for WPS, 1 otherwise
+    arrayOfByte2[6] = (byte)(byte)arrayOfByte1.length;       // length of SSID (32 bytes max)
+    byte b;
+    for (b = 0; b < 32; b++) {                               // Copy SSID into message packet, padding with zeros
+      if (b < arrayOfByte1.length) {
+        arrayOfByte2[b + 7] = (byte)arrayOfByte1[b];
+      } else {
+        arrayOfByte2[b + 7] = (byte)0;
+      } 
+    } 
+    arrayOfByte2[39] = (byte)(byte)paramSecurityType.id;
+    arrayOfByte2[40] = (byte)(byte)arrayOfByte3.length;      // Length of password (64 bytes max)
+    for (b = 0; b < 64; b++) {                               // Copy password into message packet, padding with zeros
+      if (b < arrayOfByte3.length) {
+        arrayOfByte2[b + 41] = (byte)arrayOfByte3[b];
+      } else {
+        arrayOfByte2[b + 41] = (byte)0;
+      } 
+    } 
+    arrayOfByte2[105] = Utility.CalculateChecksum(arrayOfByte2, 104, true);
+    arrayOfByte2[106] = (byte)126;
+    SendCommand(arrayOfByte2);
+  }
+  
+
