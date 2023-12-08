@@ -85,6 +85,10 @@ PLNK_PUMP_STATE_RESP = NROF_BMT + 5
 PLNK_SETUP_PARAMS_RESP = NROF_BMT + 6
 PLNK_LIGHTS_UPDATE = NROF_BMT + 7
 
+# Recognize encrypted status packets
+PLNK_C4_STATUS_UPDATE = NROF_BMT + 8
+PLNK_CA_LIGHTS_UPDATE = NROF_BMT + 9
+
 # Override pybalboa text strings for Jacuzzi-specific differences:
 
 text_tscale = ["Fahrenheit", "Celsius"]   # Just to fix the misspelling
@@ -158,13 +162,19 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         self.heatMode = -1
         self.UnknownField3 = -1
         self.UnknownField9 = -1
-        self.panelLock = -1
+
+        self.settingLock = -1
+        self.accessLock = -1
+        self.serviceLock = -1
+        # panelLock is balboa.py's name for accessLock
+        self.panelLock = self.accessLock
         
         self.lightBrightness = 0
         self.lightMode = 0
         self.lightR = 0
         self.lightG = 0
         self.lightB = 0
+        self.lightCycleTime = 0
 
         self.statusByte17 = 0
         self.filter1StartHour = 0 
@@ -172,6 +182,11 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         self.filter1Freq = 0
 
         self.filter2Mode = 0
+
+        # Support for encrypted message packets
+        self.encrypted_comm = False
+        self.encrypted_settemp = None
+        self.encrypted_settemp_task = None
 
         # In the J-235 spa the light cycle time for "blend" mode
         # is only 1 change per second. Apparently in Balboa spas
@@ -202,6 +217,133 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         # one tells you what the water temperature in the pipes is.
         self.statusByte21 = 0
   
+    def decrypt(self, packet: bytearray) -> bytearray:
+        """ Returns a decrypted version of type "C4" panel status and type
+        "CA" LED status message packets sent by "encrypted" control boards
+        for Jacuzzi and Sundance spas. 
+
+        Also updates the packet checksum byte so that any decrypted packet
+        is still a vald message packet.
+
+        Returns all other message packet types unchanged.
+
+        The encryption algorithm used by Jacuzzi and Sundance is a type of
+        "XOR Cipher" where each byte of the message data is XORed with the
+        corresponding byte of an equal-length cipher string. In this case
+        the bytes of the cipher string are just a decreasing sequence derived
+        from the length of the message data.  
+
+        In addition the encrypted packet includes an extra prefix byte which
+        is used to form a constant value that is also XORed with each byte
+        of the message data.  
+
+        As is typical with XOR cipher encryption, you would use the same
+        algorithm to both encrypt and decrypt the nessage. 
+
+        Typical encrypted C4 packet:
+        byte #:    000102030405 060708 09101112 13141516 17181920 21222324 25262728 29303132 33343536 37 3839
+        encrypted: 7e26ffafc41f 151b1a 1516a6ec 16107310 2d0c470b 68080a1d 05012206 b0000368 673c3f3e 39 937e
+        decrypted: 7e26ffafc41f 0d0000 080ab9f2 07006002 3818501d 61000117 080d2d08 b100006a 62383838 00 8a7e
+        """
+        # Quit if the packet is too short
+        if len(packet) < 7:
+            return packet
+        
+        # Encrypted packets have an extra byte that we use to form the first key value
+        packet_type = packet[4]
+        if packet_type == 0xc4:      # Status update packet
+            key1 = packet[5] ^ 0x19
+        elif packet_type == 0xca:    # Lights update packet
+            key1 = packet[5] ^ 0x59
+        elif packet_type == 0xcc:    # Button command packet
+            key1 = packet[5] ^ 0xdf
+        else:
+            # Done if not an encrypted message type
+            return packet
+
+        # Received an encrypted packet so we must be using encrypted communications
+        self.encrypted_comm = True
+     
+        # The second key value forms a cipher string which is a string of the same 
+        # length as the encrypted data, and whose byte values are each decremented by
+        # one from the previous, modulo 64.
+        HEADER_LENGTH = 5
+        packet_length = packet[1]
+        key2 = packet_length - HEADER_LENGTH - 2
+
+        # Just in case the packet we were given is an immutable "bytes" array
+        # we will convert it to a (mutable) bytearray type.
+        packet = bytearray(packet)
+
+        # Apply both keys to each encrypted value and save the decrypted result
+        # back into the original packet.
+        for i in range(6, packet_length):
+          key2 = (key2 - 1) % 64
+          packet[i] = packet[i] ^ key1 ^ key2
+
+        # Force the "extra" encryption byte to zero just so packet checksums
+        # will only change when the actual packet data fields change.
+        packet[5] = 0
+
+        # Calculate a new checksum over entire decrypted packet and save it as
+        # the new packet checksum.
+        packet[-2] = self.balboa_calc_cs(packet[1:packet_length], packet_length - 1)
+        return packet
+
+    def encrypt(self, packet: bytearray) -> bytearray:
+        """ Returns an encrypted version of a command message packet for those
+        packet types that have an encrypted equivalent. The prime example of this
+        is the "button code" type set by topside panels whenever you press a
+        panel button. 
+
+        The given packet should be a complete message packet including the start
+        and end flags (0x7e). If the message type does not have an equivalent
+        encrypted version, this method will return the given packet unchanged. 
+        """
+
+        # Quit if the packet is too short.
+        if len(packet) < 7:
+            return packet
+        
+        # Get a dictionary of encryptable message types where each element
+        # is in the form of unencrypted_type: encrypted_equivalent.
+        etypes = {
+                  0x11: 0xcc, # Balboa unencrypted button control message type
+                  0x17: 0xcc, # Jacuzzi unencrypted pump 1-3 control message type
+                  0x1a: 0xcc, # Jacuzzi unencrypted pump 4-6 control message type
+                  0x1b: 0xcc, # Jacuzzi Send Primary Filter Request message type
+                  0x20: 0xcc, # Balboa and Jacuzzi Set Target Temp message type
+                 }
+
+        # Quit if this packet type has no encrypted equivalent
+        packet_type = packet[4]
+        if packet_type not in etypes:
+            return packet
+
+        # Just in case the packet we were given is an immutable "bytes"
+        # array we will convert it to a (mutable) bytearray type.
+        packet = bytearray(packet)
+
+        # Write the new encrypted packet type into the packet.
+        packet[4] = etypes[packet_type]
+
+        # Insert the extra encryption key byte into the packet. For now
+        # the key byte is a simple constant, and add 1 to the packet
+        # length byte and update the local packet_length variable
+        # with the new length value.
+        packet.insert(5, 0x00)
+        packet[1] += 1
+        packet_length = packet[1]
+
+        # Encrypt the new packet by "decrypting" the unencrypted message
+        # data. (XOR ciphers are symmetric.)
+        packet = self.decrypt(packet)
+     
+        # Calculate a new checksum for the new, encrypted packet and save
+        # it in the packet.
+        packet[-2] = self.balboa_calc_cs(packet[1:packet_length], packet_length - 1)
+        return packet
+
     def has_changed(self, data):
         """ Returns True if this message packet is different from
         the previous message of the same message type value.
@@ -238,6 +380,82 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         self.log.debug("Requesting module ID (msg type value 0x04)")
         await super().send_mod_ident_req()
 
+    async def send_temp_change(self, newtemp):
+        """ Overrides the parent method to support encrypted spa controllers """
+        # Check if the new temperature is valid for the current heat mode
+        if (
+            newtemp < self.tmin[self.temprange][self.tempscale]
+            or newtemp > self.tmax[self.temprange][self.tempscale]
+        ):
+            self.log.error("Attempt to set temperature outside of heat mode boundary")
+            return
+
+        if not self.encrypted_comm:
+            if self.tempscale == self.TSCALE_C:
+                newtemp *= 2.0
+            await self.send_message(*mtypes[BMTS_SET_TEMP], int(round(newtemp)))
+        else:
+            # Encrypted controllers do not seem to support a command to set the
+            # the target temperature to an arbitrary value. Instead it seems the
+            # only way to change setpoint is to send a series of "Temp Up" or 
+            # "Temp Down" button commands until the controller setpoint equals
+            # the new target setpoint value.
+            #
+            # We do this by starting an asynchronous task to periodically
+            # send Temp Up or Temp Down button commands until the controller
+            # reports a setpoint temperature that is equal to newtemp.
+
+            async def _adjust_encrypted_settemp():
+                # This local coroutine asynchronously sends Temp Up or 
+                # Temp Down button commands until the controller's 
+                # setpoint temperature equals the new setpoint temperature.
+                # It must be defined before referencing it in the call to
+                # asyncio.create_task() below.
+
+                settemp_changed = True
+                while True:
+                    # If we lost connection then just end the coroutine.
+                    if not self.connected:
+                        self.encrypted_settemp_task = None
+                        return
+                    # Only send a new button command after the previous
+                    # one has been effective.
+                    if settemp_changed:
+                        # Remember the new setpoint temp
+                        cursettemp = self.settemp
+
+                        # Decide which direction to go
+                        reqd_change = self.encrypted_settemp - cursettemp
+                        if reqd_change >= 1:
+                            btncode = 0x01
+                        elif reqd_change <= -1:
+                            btncode = 0x02
+                        else:
+                            # We are within 1 degree of setpoint so end this
+                            # coroutine.
+                            self.encrypted_settemp_task = None
+                            return
+
+                        # Send a new button command to change setpoint temp.
+                        # This unencrypted button command will be converted
+                        # to an encrypted version by send_message()
+                        data = bytearray(4)
+                        data[0] = self.channel
+                        data[1] = 0xBF
+                        data[2] = 0x1A 
+                        data[3] = btncode
+                        await self.send_message(*data)
+
+                    # Wait a bit before checking the new setpoint temp
+                    await asyncio.sleep(1.0)
+                    settemp_changed = cursettemp != self.settemp
+
+            # Save the new target setpoint temperature
+            self.encrypted_settemp = newtemp
+            # Start the settemp adjustment task if it is not already running
+            if self.encrypted_settemp_task is None:
+                self.encrypted_settemp_task = asyncio.create_task(_adjust_encrypted_settemp())
+
     async def send_filter1_cycle_req(self):
         """ Sends a request for Primary Filter Cycle Info. """
         await self.send_panel_req(1, 0)
@@ -269,6 +487,84 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         # send_message() will append the start and end flags, the length
         # and the checksum.
         await self.send_message(*data)
+
+    async def _send_lock_req(self, typecode):
+        # This local routine sends a command to lock
+        # or unlock the spa control panel.
+        #
+        # typecode specifies what to do (but these are wrong!!):
+        #     81 = 0x51 = lock temperature 
+        #     41 = 0x29 = unlock temperature 
+        #     82 = 0x52 = lock spa 
+        #     42 = 0x2A = unlock spa 
+        #
+        # What really happens is this:
+        #     0x80 = is ignored
+        #     0x40 = is ignored
+        #     0x81 = sets bit 2 of lock status byte
+        #     0x41 = clears bit 2 of lock status byte
+        #     0x82 = sets bit 1 of lock status byte
+        #     0x42 = clears bit 1 of lock status byte
+        #     0x84 = sets bit 0 of lock status byte
+        #     0x44 = clears bit 0 of lock status byte
+        #     0x88 = is ignored
+        #     0x48 = is ignored
+        #     0x21 = is ignored
+        #     0x11 = is ignored
+        #     0x22 = is ignored
+        #     0x12 = is ignored
+        #     0x24 = is ignored
+        #     0x14 = is ignored
+        #     0x28 = is ignored
+        #     0x18 = is ignored
+        #
+        # When someone locks temperature changes from the topside panel,
+        # bit 3 of the lock status byte gets set, and you cannot change
+        # temperature setpoint from either the topside panel or jacuzzi.py.
+        #
+        # The way to clear any lock condition from the topside panel is 
+        # to press and hold down the menu button for at least 10 seconds.
+        # The topside panel display will then tell you which lock condition
+        # it has cleared.
+        #
+        # The typecodes above can set and clear bits 0, 1 and 2 of the
+        # lock status byte. But none will set or clear bit 3, yet it can
+        # be set and cleared from the topside panel. 
+        #
+        # Thus it is currently not possible to clear a temperature setpoint
+        # lock using jacuzzi.py.
+        #
+        # Example: 7E 0A 0A BF 1F 51 00 00 00 00 XX 7E 
+        # (XX = calculated checksum)
+        data = bytearray(8)
+        data[0] = self.channel
+        data[1] = 0xBF
+        data[2] = 0x1F
+        data[3] = typecode
+        data[4] = 00
+        data[5] = 00
+        data[6] = 00
+        data[7] = 00
+
+        # send_message() will append the start and end flags, the length
+        # and the checksum.
+        await self.send_message(*data)
+
+    async def lock_temp(self):
+        """ Prevent changes to the temperature setpoint """
+        await self._send_lock_req(0x81) # Not the correct typecode!
+
+    async def unlock_temp(self):
+        """ Allow changes to the temperature setpoint """
+        await self._send_lock_req(0x41) # Not the correct typecode!
+
+    async def lock_spa(self):
+        """ Prevent any changes to the spa """
+        await self._send_lock_req(0x82)
+
+    async def unlock_spa(self):
+        """ Allow changes to the spa """
+        await self._send_lock_req(0x42)
 
     async def set_time(self, new_time, timescale=None):
         """ Overrides the parent method to set time on a Jacuzzi spa.
@@ -486,7 +782,9 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         await self.send_filter2_cycle_req()
 
     async def send_message(self, *bytes):
-        """ Overrides parent method only to change log messaging. """
+        """ Overrides parent method only to change log messaging
+        and to add support for encrypted command messages.
+        """
         # if not connected, we can't send a message
         if not self.connected:
             return
@@ -498,6 +796,9 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         data[2:message_length] = bytes
         data[-2] = self.balboa_calc_cs(data[1:message_length], message_length - 1)
         data[-1] = M_STARTEND
+
+        if self.encrypted_comm:
+            data = self.encrypt(data)
 
         self.log.info(f"Sending: {data.hex()}")
         try:
@@ -678,11 +979,16 @@ class JacuzziSpaWifi(BalboaSpaWifi):
             self.light_status[i] = ((data[19] >> i*2) & 0x03) >> 1
 
         # Byte 20 Bits 5,4 = settingLock
+        # Temperature setting lock status is bit 3 in the Jacuzzi J-235
+        self.settingLock = (data[20] & 0x08) >> 3
+
         # Byte 20 Bits 3,2 = accessLock
         # Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
-        self.settingLock = (data[20] & 0x30) >> 4
         self.accessLock = (data[20] & 0x0C) >> 2
         self.serviceLock = (data[20] & 0x03)
+
+        # panelLock is balboa.py's name for accessLock
+        self.panelLock = self.accessLock
 
         # Prolink does not support mister? data[20] has lock bits
         # if self.mister:
@@ -765,6 +1071,297 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         #
         # await self.int_new_data_cb()
 
+    def parse_c4_status_update(self, data):
+        """ Parse an encrypted status update from the spa.
+
+        Encrypted status packets have a format different from both
+        Jacuzzi and Balboa unencrypted status messages. 
+
+        The spa spams these messages out at a very high rate of speed.
+        Typical messages: 
+           byte #: 000102030405 060708 09101112 13141516 17181920 21222324 25262728 29303132 33343536 37 3839
+                   7e26ffafc41f 0d0000 080ab9f2 07006002 3818501d 61000117 080d2d08 b100006a 62383838 00 8a7e
+DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, UV: ON
+        Encrypted: 7e26ffafc4a2 aba6a7 a8ad0251 abadc8ad 90b122b6 d3b5b7a0 b8bc92bb 14bdbede e6818283 84 f07e
+        Decrypted: 7e26ffafc4a2 0e0000 080ca0f2 07006602 3818881d 67000117 080d2008 a8000061 5e383838 00 ce7e
+                   7e26ffafc48b 0e0000 080ca0f2 07006602 3818881d 67000117 080d2008 a8000061 5e383838 00 bb7e
+                   7e26ffafc4e5 0e0000 080ca0f2 07006602 3818881d 67000117 080d2108 a8000061 5e383838 00 907e
+               TIME:2:41PM, WS: 103, WT 102, Pump 1: ON, Pump 2 OFF, LED: OFF, UV: ON
+                   7e26ffafc43c 0e4000 081ca0f2 07406602 3818881d 67000117 080d2108 a8000061 5e183838 00 757e
+                   7e26ffafc46f 0e4000 081ca0f2 07406602 3818881d 67000117 080d2208 a8000061 5e183838 00 a27e
+               TIME:2:41PM, WS: 103, WT 101, Pump 1: OFF, Pump 2 ON, LED: OFF, UV: ON
+                   7e26ffafc4c0 0e0004 080ca0f2 07006602 3818881d 67000117 080d2208 a8000061 5e383838 00 697e
+                   7e26ffafc484 0e0004 080ca0f2 07006602 3818881d 67000117 080d2208 a8000061 5e383838 00 0c7e
+               TIME:2:42PM,WS: 103, WT 101, Pump 1: ON, Pump 2 ON, LED: OFF, UV: ON
+                   7e26ffafc4d5 0e4004 081ca0f2 07406602 3818881d 67000117 080d2208 a8000061 5e183838 00 237e
+                   7e26ffafc4b2 0e4004 081ca0f2 07406602 3818881d 67000117 080d2208 a8000061 5e183838 00 eb7e
+               TIME:2:43PM,WS: 103, WT 101 (maybe 102), Pump 1: OFF, Pump 2 OFF, LED: ON - Changing colors, UV: ON
+                   7e26ffafc44c 0e0000 080ca0f2 07006602 3818881d 67000117 080d2308 a8000061 5e383838 00 f17e
+                   7e26ffafc4ee 0e4000 080ca0f2 07406602 3818881d 67000117 080d2308 a8000061 5e183838 00 1a7e
+               TIME:2:43PM,WS: 103, WT 101 (maybe 102), Pump 1: OFF, Pump 2 OFF, LED: ON - BLUE, UV: ON
+                   7e26ffafc4d1 0e4000 080ca0f2 07406602 3818881d 67000117 080d2408 a8000061 5e183838 00 bd7e
+        """
+ 
+        # Modified for Prolink; was data[8] and data[9] for Balboa 
+        self.time_hour = data[6]
+        # Byte 27 = CurrentTimeMinute (probably only bits 5-0) (0x19)
+        self.time_minute = data[27] & 0x3F
+
+        # Byte 7 Bits 7,6,5 = currentWeek (actually day of week; 1 = Monday) 
+        # Byte 7 Bits 4,3,2,1,0 = daysInMonth (actually day of month)
+        # self.dayOfWeek = (data[7] & 0xE0) >> 5
+        self.dayOfWeek = (data[20] & 0x07)        # Not sure this is correct
+        self.dayOfMonth = (data[19] & 0xF8) >> 3
+
+        # Have not found this yet
+        # Byte 8 = currentMonth
+        # self.currentMonth = (data[20] & 0x7)
+
+        # Byte 24 = currentYear (since 2000)
+        self.currentYear = data[24] + 2000
+
+        # Byte 10 Bits 7,6 = Filter2Mode (0b00 = off)
+        # Byte 10 Bits 5,4 = HeatModeState (0b01 = on-low?)
+        # Byte 10 Bits 3,2,1,0 = SpaState 
+        # (values of 1,2,8,9 or 10 get forced to -1) (0b0010 = 2)
+        # self.filter2Mode = (data[10] & 0xC0) >> 6
+        # self.heatModeState = (data[10] & 0x30) >> 4
+        # self.spaState = (data[10] & 0x0F)
+
+        # TODO: why are heatmode and heatstate the same bits?
+        # flag 2 is heatmode
+        # Modified for encrypted; Balboa had no bit shift
+        # Byte 18 = heatMode (0x18)
+        self.heatmode = (data[18] >> 4) & 0x03
+
+        # flag 4 heating state, temp range
+        # Modified for encrypted; Balboa was data[15]
+        # Byte 26 = Bit 6 = heaterOn (0x0c, 0x0d, 0x8d)
+        self.heatstate = (data[26] & 0x40) >> 6
+
+        # Byte 11 = errorCode (0x00 = no error)
+        # self.errorCode = data[11]
+
+        # Modified for Prolink; was data[7] for Balboa 
+        curtemp = float(data[15])
+
+        # Byte 13 = don't care? (0xFA)
+        # self.statusByte13 = data[13]
+
+        # Modified for Prolink; was data[25] for Balboa 
+        settemp = float(data[21])
+        self.curtemp = curtemp / (2 if self.tempscale ==
+                               self.TSCALE_C else 1) if curtemp != 255 else None
+        self.settemp = settemp / (2 if self.tempscale == self.TSCALE_C else 1)
+
+        # Byte 15 Bits 7,6 = Pump3State
+        # Byte 15 Bits 5,4 = Pump2State (bit posn off by 1??)
+        # Byte 15 Bits 3,2 = Pump1State 
+        # Byte 15 Bits 1,0 read but not used
+        # 
+        # From Pedro and HyperActiveJ's work:
+        # HyperActiveJ's pump0 = Pedro's pump1
+        # HyperActiveJ's pump1 = Pedro's pump2?? - yes, but HyperActiveJ is not consistent.
+        # Pump0 = circ pump ?? (if present)
+        #
+        # Byte 8 Bits 7,6 = pump0State (circ pump?) (0b00)
+        # Byte 8 Bits 3,2 = pump2State (blower?) (0b00, 0x00,0x04)
+        self.pump2State = (data[8] & 0x0c) >> 2
+        self.pump0State = (data[8] & 0xc0) >> 6
+
+        # Byte 10 Bit 7 = ManualCirc (0b0)
+        # Byte 10 Bit 6 = AutoCirc (0b0)
+        # Byte 10 Bits 5,4 = pump1State (0b00, 0x0c, 0x0d, 0x1d, 0x0e, 0x1e)
+        self.pump1State = (data[10] & 0x30) >> 4
+
+        # Modified for Prolink; does not have a temprange feature
+        # self.temprange = (data[15] & 0x04) >> 2
+
+        # From Pedro and HyperActiveJ's work:
+        # TODO: This is a hack, just to see if it works
+        for i in range(0, 6):
+            if not self.pump_array[i]:
+                continue
+            if i == 0:
+                self.pump_status[i] = self.pump0State
+            elif i == 1:
+                self.pump_status[i] = self.pump1State
+            elif i == 2:
+                self.pump_status[i] = self.pump2State
+            else:
+                continue
+
+            # Modified for Prolink -- does not have pumps 5 or 6
+            # else:
+            #   self.pump_status[i] = (data[17] >> ((i - 4)*2)) & 0x03
+
+        # if self.circ_pump:
+            # Modified for Prolink; not clear which pump is circ pump -- pump 0 maybe?
+            # Answer: there is no circ pump on J-235. Pump 1 (Jets 1) runs at low speed
+            # to circulate during filter cycles. Pump 0 does not exist so bits 0 & 1 of
+            # data[15] will always be zero. HOWEVER, J-300 and J-400 series spas do
+            # have a circulation pump so this is probably still needed.
+            #
+            # Balboa was data[18] == 0x02
+            # if data[15] & 0x03:
+            #     self.circ_pump_status = 1
+            # else:
+            #     self.circ_pump_status = 0
+
+        # From Jacuzzi app code:
+        # Byte 16 Bits 6,5 = IsSecondaryON
+        # Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??)
+        # Byte 16 Bits 4,3 = IsBlowerON (Bit posn off by 1??)
+
+        # But these bit positions seem to make more sense:
+        # Byte 16 Bits 7,6 = IsSecondaryON
+        # Byte 16 Bits 5,4 = IsPrimaryON (Bit posn off by 1??)
+        # Byte 16 Bits 3,2 = IsBlowerON (Bit posn off by 1??)
+        # Byte 16 Bits 1,0 = IsUVON
+        # TODO: what are the real bit positions?
+        #
+        # All of these except isSecondaryOn will come on during
+        # a filter cycle and also whenever pump 1 is turned on
+        # manually. 
+        # self.isSecondaryOn = (data[16] & 0xC0) >> 6
+        # self.isPrimaryOn = (data[16] & 0x30) >> 4
+        # self.isBlowerOn = (data[16] & 0x0C) >> 2
+
+        # Byte 16 Bits 2,1 = IsUVON
+        # Byte 7 Bit 6 = UV On (0b0, 0x00, 0x40, 0x60)
+        self.isUVOn = (data[7] & 0xc0) >> 6
+
+        # flag 3 is filter mode
+        # Modified for Prolink IsPrimaryOn (bit 5,4 of byte 16)
+        # Balboa was: self.filter_mode = (data[14] & 0x0c) >> 2
+        #
+        # It is possible that IsBlowerOn in Prolink is mislabeled
+        # and actually is equivalent to filter_mode in Balboa.
+        # If so then this should actually be:
+        # self.filter_mode = (data[16] & 0x0C) >> 2
+        # self.filter_mode = (data[16] & 0x30) >> 4
+
+        # It does not appear that any Jacuzzi hot tub has a blower
+        # (at least at this time). This status is always on whenever
+        # pump 1 is on.
+        # if self.blower:
+            # Modified for Prolink; was data[18]. Same bits as isBlowerOn
+            # self.blower_status = (data[16] & 0x0c) >> 2
+
+        # Byte 17 = don't care?
+        # In Prolink byte17 seems to indicate that pump 1 is running
+        # -- i.e. whenever pump 1 is on, byte 17 is 0x01. At all other
+        # times it is 0x00. It is delayed by about 1 second with 
+        # respect to changes in pump 1. It does transition oddly at the
+        # end of a filter cycle though; turning off and back on
+        # briefly. Perhaps this is a flow sensor signal?
+        # UPDATE: Yes I believe it is the flow switch signal
+        # self.statusByte17 = data[17]
+
+        # Modified for Prolink; was data[14] ; logic reversed??
+        # TODO: resolve the logic reversal question
+        # (12 hr only if both bits 2 & 1 are 0) (= 0x02)
+        # if data[18] & 0x06 == 0:
+            # self.timescale = self.TIMESCALE_12H
+        # else:
+            # self.timescale = self.TIMESCALE_24H
+
+        # Modified for Prolink; was data[14] for Balboa (= 0x02)
+        # if data[18] & 0x01:
+            # self.tempscale = self.TSCALE_C
+        # else:
+            # self.tempscale = self.TSCALE_F
+
+        # Byte 19 = don't care? (= 0x00)
+        # self.statusByte19 = data[19]
+
+        # for i in range(0, 2):
+            # if not self.light_array[i]:
+                # continue
+            # Prolink light bits unclear; data[19] is unused??
+            # Yes it appears data[19] does not hold light status.
+            # Instead the light status is contained in message
+            # type 0x23.
+            # self.light_status[i] = ((data[19] >> i*2) & 0x03) >> 1
+
+        # Byte 20 Bits 5,4 = settingLock
+        # Byte 20 Bits 3,2 = accessLock
+        # Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
+        # self.settingLock = (data[20] & 0x30) >> 4
+        # self.accessLock = (data[20] & 0x0C) >> 2
+        # self.serviceLock = (data[20] & 0x03)
+
+        # Prolink does not support mister? data[20] has lock bits
+        # if self.mister:
+        #    self.mister_status = data[20] & 0x01
+        # 
+        # Yes it appears Jacuzzi does not have a mister feature on
+        # any of its spas.
+
+        # Modified for Prolink; does not have Aux channels?
+        # It does not appear that any Jacuzzi hot tub has Aux 1 or 2
+        # for i in range(0, 2):
+        #     if not self.aux_array[i]:
+        #         continue
+        #     if i == 0:
+        #         self.aux_status[i] = data[20] & 0x08
+        #     else:
+        #         self.aux_status[i] = data[20] & 0x10
+
+        # Byte 21 = don't care? -- actually 2nd sensor of current water temp
+        # Byte 22 = don't care?
+        # Byte 23 = don't care?
+        # self.statusByte21 = data[21]
+        # self.statusByte22 = data[22]
+        # self.statusByte23 = data[23]
+
+        # Byte 24 = CLEARRAYLSB
+        # Byte 25 = CLEARRAYMSB
+        # NOTE: MSB is actually LSB and LSB is MSB!
+        # self.clearrayTime = (data[24] * 256) + data[25]
+
+        # Byte 26 = WATERLSB
+        # Byte 27 = WATERMSB
+        # NOTE: MSB is actually LSB and LSB is MSB!
+        # self.waterTime = (data[26] * 256) + data[27]
+
+        # if data[1] >= 30: # packet length including checksum byte
+            # Byte 28 = OUTERFILTERLSB
+            # Byte 29 = OUTERFILTERMSB
+            # NOTE: MSB is actually LSB and LSB is MSB!
+            # self.outerFilterTime = (data[28] * 256) + data[29]
+ 
+        # if data[1] >= 32: # packet length including checksum byte
+            # Byte 30 = INNERFILTERLSB
+            # Byte 31 = INNERFILTERMSB
+            # NOTE: MSB is actually LSB and LSB is MSB!
+            # self.innerFilterTime = (data[30] * 256) + data[31]
+
+        # if data[1] >= 33: # packet length including checksum byte
+            # Byte 32 Bits 7,6,5,4 = WiFiState
+            #  0 = SpaWifiState.Unknown
+            #  1 = SpaWifiState.SoftAPmodeUnavailable
+            #  2 = SpaWifiState.SoftAPmodeAvailable
+            #  3 = SpaWifiState.InfrastructureMode
+            #  4 = SpaWifiState.InfrastructureModeConnectedToNeworkNotCloud
+            #  5 = SpaWifiState.InfrastructureModeConnectedToNeworkCloud
+            #  14 = SpaWifiState.LINKINGTONETWORK
+            #  15 = SpaWifiState.NOTCOMMUNICATINGTOSPA
+            # self.spaWifiState = (data[32] & 0xF0) >> 4
+
+        # if data[1] >= 37: # packet length including checksum byte
+            # Byte 33 = don't care
+            # Byte 34 = don't care
+            # Byte 35 = don't care
+            # Byte 36 = don't care
+            # self.statusByte33 = data[33]
+            # self.statusByte34 = data[34]
+            # self.statusByte35 = data[35]
+            # self.statusByte36 = data[36]
+
+        # time.time() increments once per second
+        self.lastupd = time.time()
+ 
     def parse_system_information(self, data):
         """ Overrides parent method to handle the dofferemces in Jaccuzi 
         system information message packets vs those in Balboa systems.
@@ -909,6 +1506,51 @@ class JacuzziSpaWifi(BalboaSpaWifi):
                       self.lightG, 
                       self.lightB))
 
+    def parse_ca_light_status_update(self, data): 
+        """ Parse an encrypted Jacuzzi Light status update message packet.
+
+        Typical encrypted CA packet:
+        byte #:    000102030405 060708 09101112 13141516 17181920 21222324 25262728 29303132 33 3435
+        encrypted: 7e22ffafca83 3fc380 cd33cf8c cbc8cbcb d5d4d7d6 d1d0d3d2 dddcdfdf d9d8dbda e5 b27e
+        decrypted: 7e22ffafca83 ff0042 00ff0042 02000001 00000000 00000000 00000001 00000000 00 557e (LEDs on solid blue)
+                   7e22ffafca70 ff0042 00ff0042 02000001 00000000 00000000 00000001 00000000 00 357e (LEDs on solid blue)
+                   7e22ffafca43 000000 00000000 00000000 00000000 00000000 00000001 00000000 00 b87e (All LEDs off)
+                   7e22ffafca58 ff0042 00220042 80000001 00000000 00dc0002 00000001 00000000 00 d77e (Changing colors)
+                   7e22ffafcae2 ff0042 00000042 80000001 00290000 00d60002 00000001 00000000 00 887e (Changing colors)
+                   7e22ffafca79 ff0042 00000042 80000001 00750000 00890002 00000001 00000000 00 b97e (Changing colors)
+                   7e22ffafcacd ff0042 00000042 80000001 00c20000 003c0002 00000001 00000000 00 b27e (Changing colors)
+                   7e22ffafca24 ff0042 000f0042 80000001 00ef0000 00000002 00000001 00000000 00 5d7e (Changing colors)
+                   7e22ffafca91 ff0042 005c0042 80000001 00a20000 00000002 00000001 00000000 00 0f7e (Changing colors)
+        """
+
+        # This message type is not defined in the Prolink app 
+        # or balboa.py but "encrypted" spa controllers do broadcast this
+        # at regular intervals, much like the PLNK_STATUS_UPDATE
+        # message. It contains the current state of the LED lights.
+        # 
+        # The byte positions differ from non-encrypted LED status message
+        # (type 0x23), and it adds a field for light cycle time (fast
+        # or slow).
+        #
+        # Byte 6 = Brightness Level
+        # Byte 10 = Blue Level
+        # Byte 13 = Light Mode
+        # Byte 18 = Green Level
+        # Byte 22 = Red Level
+        # Byte 24 = Light Cycle Time
+
+        self.lightMode = data[13]
+        self.lightBrightness = data[6]
+        self.lightR = data[22]
+        self.lightG = data[18]
+        self.lightB = data[10]
+        self.lightCycleTime = data[24]
+        self.log.info('Light status: L: {0} R: {1} G: {2} B: {3}'.format(
+                      self.lightBrightness, 
+                      self.lightR, 
+                      self.lightG, 
+                      self.lightB))
+
     async def read_one_message(self):
         """ Overrides parent method to update self.connection_state
         and add debug logging.
@@ -963,6 +1605,13 @@ class JacuzziSpaWifi(BalboaSpaWifi):
             mtype = PLNK_SETUP_PARAMS_RESP
         elif data[4] == 0x23:
             mtype = PLNK_LIGHTS_UPDATE
+
+        # Support encrypted packet types
+        elif data[4] == 0xC4:
+            mtype = PLNK_C4_STATUS_UPDATE
+        elif data[4] == 0xCA:
+            mtype = PLNK_CA_LIGHTS_UPDATE
+
         else:
             mtype = super().find_balboa_mtype(data)
         return mtype 
@@ -981,6 +1630,10 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         if data is None:
             self.log.error(f"data is None in process_message()")
             return None
+
+        # Decrypt the packet if it is encrypted
+        data = self.decrypt(data)
+
         mtype = self.find_balboa_mtype(data)
         if mtype is None:
             self.log.debug("Unknown msg type 0x{:02X} in process_message()".format(data[4]))
@@ -1012,6 +1665,13 @@ class JacuzziSpaWifi(BalboaSpaWifi):
             self.parse_setup_parameters(data)
         elif mtype == PLNK_LIGHTS_UPDATE:
             self.parse_light_status_update(data)
+
+        # Support encrypted message types
+        elif mtype == PLNK_C4_STATUS_UPDATE:
+            self.parse_c4_status_update(data)
+        elif mtype == PLNK_CA_LIGHTS_UPDATE:
+            self.parse_ca_light_status_update(data)
+
         else:
             self.log.error("Unhandled msg type 0x{0:02X} ({0}) in process_message()".format(data[4]))
         return mtype
@@ -1180,8 +1840,18 @@ class JacuzziSpaWifi(BalboaSpaWifi):
     def get_UnknownField9(self):  
         return self.UnknownField9 
         
+    # From balboa.py -- same as accessLock
     def get_panelLock(self):  
         return self.panelLock 
+
+    def get_settingLock(self):  
+        return self.settingLock 
+
+    def get_panelLock(self):  
+        return self.panelLock 
+
+    def get_serviceLock(self):  
+        return self.serviceLock 
         
     def get_lightBrightness(self):  
         return self.lightBrightness

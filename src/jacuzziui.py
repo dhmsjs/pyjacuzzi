@@ -669,6 +669,40 @@ def setup_ui_display(spa_ui):
                            _change_filter2_mode)
     cyc2modesetfield.set_dialog(cyc2modesetdialog)
 
+    # Add temperature lock control to the controls Window.
+
+    _lock_mode_names = [
+        "Unlocked",
+        "Locked",
+    ]
+
+    def _get_templock_text():
+        # The only "setting" that is locked is temperature setpoint
+        mode = spa.settingLock
+        name = "Err" if mode < 0 or mode > 2 else _lock_mode_names[mode]
+        return "Temp:{0}".format(name)
+
+    templockfield = Textfield(row, col)
+    templockfield.set_update_cb(_get_templock_text)
+    ctlwin.add_field(templockfield)
+    templockfield.update()
+    row += templockfield.get_required_rows()
+
+    def _change_templock_mode(mode):
+        # This local routine starts an asynchronous task to send the
+        # new temperature lock mode to the spa. 
+        # 
+        if mode == 1:
+            spa_ui.add_coroutine(spa.lock_temp)
+        elif mode == 0:
+            spa_ui.add_coroutine(spa.unlock_temp)
+
+    # Now add the edit dialog to the Textfield
+    templockdialog = ListDialog(spa_ui.display, _lock_mode_names,
+                           "Enter the new mode:",
+                           _change_templock_mode)
+    templockfield.set_dialog(templockdialog)
+
     # Create a PadWindow at the bottom for status messages.
     #
     # For PadWindows the width and height apply to the underlying
