@@ -27,7 +27,7 @@ Tested on a Raspberry PI4 running Ubuntu 20.04.6 LTS (GNU/Linux 5.4.0-1082-raspi
 
 # Update 12/8/23
 
-Committed changes that support Sundance-style "encrypted" control boards. Sundance control boards are very, very different from uncrypted Jacuzzi control boards and we lost access to our encrypted control board before we could resolve a lot of bugs. We know that you can at least turn pump 1 on and off, and change temperature setpoint but lost access to the control board before we could fully debug the temperature control part. If anyone has a Sundance spa (or a Jacuzzi spa with an "encrypted" control board) and wants to continue that development, let me know!
+Committed changes that support Sundance-style "encrypted" control boards. Sundance control boards are very, very different from unencrypted Jacuzzi control boards and we lost access to our encrypted control board before we could resolve a lot of bugs. We know that you can at least turn pump 1 on and off, and change temperature setpoint but lost access to the control board before we could fully debug the temperature control part. If anyone has a Sundance spa (or a Jacuzzi spa with an "encrypted" control board) and wants to continue that development, let me know!
 
 For unencrypted Jacuzzi control boards, added support for locking and unlocking remotely but this too still needs work. jacuzzi.py can now send command packets that change several status bits (bits 0, 1 and 2 specifically) in the lock status byte, but we have yet to find a command code that will remotely clear a temperature lock that was set via the topside panel (bit 3).
 
