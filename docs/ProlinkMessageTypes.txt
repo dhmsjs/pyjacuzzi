@@ -695,6 +695,15 @@ Blower = 12 = 0x0C
 TempRange = 80 = 0x50
 HeatMode = 81 = 0x51
 
+These additional button codes are inferred by HyperActiveJ's Sundance780 python code. They do not appear in the Prolink app but they are likely to work with Jacuzzi spas anyway:
+
+NothingPressed = 0 = 0x00
+TempUp = 1 = 0x01
+TempDown = 2 = 0x02
+Unknown = 3 = 0x03
+ClearRay = 15 = 0x0E
+Menu = 30 = 0x1E
+
 Connect To WiFi Message Type (see WifiCommunicator.connectToWifi())
 ----------------------------
 
@@ -870,7 +879,14 @@ Param1 = 41 = 0x29 = unlock temperature?
 Param1 = 82 = 0x52 = lock spa? 
 Param1 = 42 = 0x2A = unlock spa? 
 
-Param2 through param5 = 4 decimal digit values of a user-entered lock/unlock code?
+After testing on the J-235 hot tub, this is what works and what does not:
+
+SL = Settings Lock ==> bit 2; 0x81 sets, 0x41 clears
+AL = Accessory Lock ==> bit 1; 0x82 sets, 0x42 clears
+SVL = Service Lock ==> bit 0; 0x84 sets, 0x44 clears
+TL = Temperature Settings Lock ==> not able to change remotely!
+
+Param2 through param5 = 4 decimal digit values of a user-entered lock/unlock password? If so it does not look like it was ever implemented.
 
 In the Prolink app the lock options are for settings lock, access lock, and service lock.  There is no password to enter.  To unlock you press the topside panel's menu button for 10 seconds and it clears whatever lock is currently present.
 
