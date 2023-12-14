@@ -163,11 +163,12 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         self.UnknownField3 = -1
         self.UnknownField9 = -1
 
-        self.settingLock = -1
-        self.accessLock = -1
+        self.tempLock = -1
+        self.settingsLock = -1
+        self.accessoriesLock = -1
         self.serviceLock = -1
-        # panelLock is balboa.py's name for accessLock
-        self.panelLock = self.accessLock
+        # panelLock is balboa.py's name for settingsLock
+        self.panelLock = self.settingsLock
         
         self.lightBrightness = 0
         self.lightMode = 0
@@ -490,9 +491,11 @@ class JacuzziSpaWifi(BalboaSpaWifi):
 
     async def _send_lock_req(self, typecode):
         # This local routine sends a command to lock
-        # or unlock the spa control panel.
+        # or unlock the spa control panel. Tested on a 
+        # Jacuzzi J-235 tub. May be different on other
+        # makes & models.
         #
-        # typecode specifies what to do (but these are wrong!!):
+        # typecodes from the Prolink app (but these are wrong!!):
         #     81 = 0x51 = lock temperature 
         #     41 = 0x29 = unlock temperature 
         #     82 = 0x52 = lock spa 
@@ -501,12 +504,12 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         # What really happens is this:
         #     0x80 = is ignored
         #     0x40 = is ignored
-        #     0x81 = sets bit 2 of lock status byte
-        #     0x41 = clears bit 2 of lock status byte
-        #     0x82 = sets bit 1 of lock status byte
-        #     0x42 = clears bit 1 of lock status byte
-        #     0x84 = sets bit 0 of lock status byte
-        #     0x44 = clears bit 0 of lock status byte
+        #     0x81 = sets bit 2 of lock status byte ==> locks settings
+        #     0x41 = clears bit 2 of lock status byte ==> unlocks settings
+        #     0x82 = sets bit 1 of lock status byte ==> locks accessories
+        #     0x42 = clears bit 1 of lock status byte ==> unlocks accessories
+        #     0x84 = sets bit 0 of lock status byte ==> service lock
+        #     0x44 = clears bit 0 of lock status byte == service unlock
         #     0x88 = is ignored
         #     0x48 = is ignored
         #     0x21 = is ignored
@@ -517,6 +520,11 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         #     0x14 = is ignored
         #     0x28 = is ignored
         #     0x18 = is ignored
+        #     0x00 = is ignored
+        #     0x01 = is ignored
+        #     0xFF = is ignored
+        #     0x55 = is ignored
+        #     0xAA = is ignored
         #
         # When someone locks temperature changes from the topside panel,
         # bit 3 of the lock status byte gets set, and you cannot change
@@ -550,21 +558,40 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         # and the checksum.
         await self.send_message(*data)
 
+    # Apparently temperature changes cannot be locked and unlocked
+    # remotely. They can be locked and unlocked from the topside
+    # panel though. (See above.)
     async def lock_temp(self):
         """ Prevent changes to the temperature setpoint """
-        await self._send_lock_req(0x81) # Not the correct typecode!
+        await self._send_lock_req(0x88) # 0x88 doesn't work
 
     async def unlock_temp(self):
         """ Allow changes to the temperature setpoint """
-        await self._send_lock_req(0x41) # Not the correct typecode!
+        await self._send_lock_req(0x48) # 0x48 doesn't work
 
-    async def lock_spa(self):
+    async def lock_settings(self):
         """ Prevent any changes to the spa """
+        await self._send_lock_req(0x81)
+
+    async def unlock_settings(self):
+        """ Allow changes to the spa """
+        await self._send_lock_req(0x41)
+
+    async def lock_accessories(self):
+        """ Prevent any changes to accessories """
         await self._send_lock_req(0x82)
 
-    async def unlock_spa(self):
-        """ Allow changes to the spa """
+    async def unlock_accessories(self):
+        """ Allow changes to accessories """
         await self._send_lock_req(0x42)
+
+    async def lock_service(self):
+        """ Prevent any pumps from running (for servicing) """
+        await self._send_lock_req(0x84)
+
+    async def unlock_service(self):
+        """ Allow pumps to run (after servicing) """
+        await self._send_lock_req(0x44)
 
     async def set_time(self, new_time, timescale=None):
         """ Overrides the parent method to set time on a Jacuzzi spa.
@@ -979,16 +1006,22 @@ class JacuzziSpaWifi(BalboaSpaWifi):
             self.light_status[i] = ((data[19] >> i*2) & 0x03) >> 1
 
         # Byte 20 Bits 5,4 = settingLock
-        # Temperature setting lock status is bit 3 in the Jacuzzi J-235
-        self.settingLock = (data[20] & 0x08) >> 3
+        # Temperature lock status is bit 3 in the Jacuzzi J-235
+        self.tempLock = (data[20] & 0x08) >> 3
 
-        # Byte 20 Bits 3,2 = accessLock
+        # Settings lock status is bit 2 in the Jacuzzi J-235
+        self.settingsLock = (data[20] & 0x04) >> 2
+
+        # Byte 20 Bits 3,2 = accessoriesLock
+        # Accessories lock status is bit 1 in the Jacuzzi J-235
+        self.accessoriesLock = (data[20] & 0x02) >> 1
+
         # Byte 20 Bits 1,0 = maintenanceLock (Bit posn error off by 1??)
-        self.accessLock = (data[20] & 0x0C) >> 2
-        self.serviceLock = (data[20] & 0x03)
+        # Service lock status is bit 0 in the Jacuzzi J-235
+        self.serviceLock = (data[20] & 0x01)
 
-        # panelLock is balboa.py's name for accessLock
-        self.panelLock = self.accessLock
+        # panelLock is balboa.py's name for settingsLock
+        self.panelLock = self.settingsLock
 
         # Prolink does not support mister? data[20] has lock bits
         # if self.mister:
@@ -1840,15 +1873,15 @@ DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, 
     def get_UnknownField9(self):  
         return self.UnknownField9 
         
-    # From balboa.py -- same as accessLock
+    # From balboa.py -- same as settingsLock
     def get_panelLock(self):  
         return self.panelLock 
 
-    def get_settingLock(self):  
-        return self.settingLock 
+    def get_settingsLock(self):  
+        return self.settingsLock 
 
-    def get_panelLock(self):  
-        return self.panelLock 
+    def get_accessoriesLock(self):  
+        return self.accessoriesLock 
 
     def get_serviceLock(self):  
         return self.serviceLock 

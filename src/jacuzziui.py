@@ -647,7 +647,7 @@ def setup_ui_display(spa_ui):
     def _get_cyc2mode_text():
         mode = spa.filter2Mode
         name = "Err" if mode < 0 or mode > 2 else _cycle2_mode_names[mode]
-        return "Cycle 2:{0}".format(name)
+        return "Cycle 2: {0}".format(name)
 
     cyc2modesetfield = Textfield(row, col)
     cyc2modesetfield.set_update_cb(_get_cyc2mode_text)
@@ -677,10 +677,9 @@ def setup_ui_display(spa_ui):
     ]
 
     def _get_templock_text():
-        # The only "setting" that is locked is temperature setpoint
-        mode = spa.settingLock
+        mode = spa.tempLock
         name = "Err" if mode < 0 or mode > 2 else _lock_mode_names[mode]
-        return "Temp:{0}".format(name)
+        return "Temp: {0}".format(name)
 
     templockfield = Textfield(row, col)
     templockfield.set_update_cb(_get_templock_text)
@@ -702,6 +701,90 @@ def setup_ui_display(spa_ui):
                            "Enter the new mode:",
                            _change_templock_mode)
     templockfield.set_dialog(templockdialog)
+
+    # Add settings lock control to the controls Window.
+
+    def _get_settingslock_text():
+        mode = spa.settingsLock
+        name = "Err" if mode < 0 or mode > 2 else _lock_mode_names[mode]
+        return "Settings: {0}".format(name)
+
+    settingslockfield = Textfield(row, col)
+    settingslockfield.set_update_cb(_get_settingslock_text)
+    ctlwin.add_field(settingslockfield)
+    settingslockfield.update()
+    row += settingslockfield.get_required_rows()
+
+    def _change_settingslock_mode(mode):
+        # This local routine starts an asynchronous task to send the
+        # new settings lock mode to the spa. 
+        # 
+        if mode == 1:
+            spa_ui.add_coroutine(spa.lock_settings)
+        elif mode == 0:
+            spa_ui.add_coroutine(spa.unlock_settings)
+
+    # Now add the edit dialog to the Textfield
+    settingslockdialog = ListDialog(spa_ui.display, _lock_mode_names,
+                           "Enter the new mode:",
+                           _change_settingslock_mode)
+    settingslockfield.set_dialog(settingslockdialog)
+
+    # Add accessories lock control to the controls Window.
+
+    def _get_accessorieslock_text():
+        mode = spa.accessoriesLock
+        name = "Err" if mode < 0 or mode > 2 else _lock_mode_names[mode]
+        return "Accessories: {0}".format(name)
+
+    accessorieslockfield = Textfield(row, col)
+    accessorieslockfield.set_update_cb(_get_accessorieslock_text)
+    ctlwin.add_field(accessorieslockfield)
+    accessorieslockfield.update()
+    row += accessorieslockfield.get_required_rows()
+
+    def _change_accessorieslock_mode(mode):
+        # This local routine starts an asynchronous task to send the
+        # new accessories lock mode to the spa. 
+        # 
+        if mode == 1:
+            spa_ui.add_coroutine(spa.lock_accessories)
+        elif mode == 0:
+            spa_ui.add_coroutine(spa.unlock_accessories)
+
+    # Now add the edit dialog to the Textfield
+    accessorieslockdialog = ListDialog(spa_ui.display, _lock_mode_names,
+                           "Enter the new mode:",
+                           _change_accessorieslock_mode)
+    accessorieslockfield.set_dialog(accessorieslockdialog)
+
+    # Add service lock control to the controls Window.
+
+    def _get_servicelock_text():
+        mode = spa.serviceLock
+        name = "Err" if mode < 0 or mode > 2 else _lock_mode_names[mode]
+        return "Service: {0}".format(name)
+
+    servicelockfield = Textfield(row, col)
+    servicelockfield.set_update_cb(_get_servicelock_text)
+    ctlwin.add_field(servicelockfield)
+    servicelockfield.update()
+    row += servicelockfield.get_required_rows()
+
+    def _change_servicelock_mode(mode):
+        # This local routine starts an asynchronous task to send the
+        # new accessories lock mode to the spa. 
+        # 
+        if mode == 1:
+            spa_ui.add_coroutine(spa.lock_service)
+        elif mode == 0:
+            spa_ui.add_coroutine(spa.unlock_service)
+
+    # Now add the edit dialog to the Textfield
+    servicelockdialog = ListDialog(spa_ui.display, _lock_mode_names,
+                           "Enter the new mode:",
+                           _change_servicelock_mode)
+    servicelockfield.set_dialog(servicelockdialog)
 
     # Create a PadWindow at the bottom for status messages.
     #
