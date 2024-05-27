@@ -694,7 +694,11 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         data[3] = pumpcode
 
         # calculate how many times to push the button
-        iter = max((newstate - self.pump_status[pump]) % (self.pump_array[pump] + 1), 1)
+        # iterations = (divisor + (newstate - currentstate)) % divisor
+        divisor = self.pump_array[pump] + 1
+        delta = newstate - self.pump_status[pump]
+        iter = (divisor + delta) % divisor
+
         # now push the button that number of times
         for i in range(0, iter):
             # send_message() will append the start and end flags, the length
@@ -1138,7 +1142,10 @@ DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, 
         # Modified for Prolink; was data[8] and data[9] for Balboa 
         self.time_hour = data[6]
         # Byte 27 = CurrentTimeMinute (probably only bits 5-0) (0x19)
-        self.time_minute = data[27] & 0x3F
+        # For some unknown reason, the encrypted spa controllers XOR the minutes value
+        # with 0x08. So we have to do the same again to get back to actual minutes.
+        # (Thanks to Michael Detwiler for teasing this out.)
+        self.time_minute = (data[27] & 0x3F) ^ 0x08
 
         # Byte 7 Bits 7,6,5 = currentWeek (actually day of week; 1 = Monday) 
         # Byte 7 Bits 4,3,2,1,0 = daysInMonth (actually day of month)
