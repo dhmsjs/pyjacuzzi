@@ -893,6 +893,14 @@ class JacuzziSpaWifi(BalboaSpaWifi):
         # Byte 13 = don't care? (0xFA)
         self.statusByte13 = data[13]
 
+        # Modified for Prolink; was data[14] for Balboa (= 0x02)
+        # Note that we need to set self.tempscale *before* updating
+        # self.curtemp and self.settemp. (Thanks marcbou!)
+        if data[18] & 0x01:
+            self.tempscale = self.TSCALE_C
+        else:
+            self.tempscale = self.TSCALE_F
+
         # Modified for Prolink; was data[25] for Balboa 
         settemp = float(data[14])
         self.curtemp = curtemp / (2 if self.tempscale ==
@@ -990,12 +998,6 @@ class JacuzziSpaWifi(BalboaSpaWifi):
             self.timescale = self.TIMESCALE_12H
         else:
             self.timescale = self.TIMESCALE_24H
-
-        # Modified for Prolink; was data[14] for Balboa (= 0x02)
-        if data[18] & 0x01:
-            self.tempscale = self.TSCALE_C
-        else:
-            self.tempscale = self.TSCALE_F
 
         # Byte 19 = don't care? (= 0x00)
         self.statusByte19 = data[19]
@@ -1188,6 +1190,18 @@ DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, 
         # Byte 13 = don't care? (0xFA)
         # self.statusByte13 = data[13]
 
+        # Modified for Prolink; was data[14] for Balboa (= 0x02)
+        # Note that we need to set self.tempscale *before* updating
+        # self.curtemp and self.settemp. (Thanks marcbou!)
+        
+        # This is commented out for now since we don't know whether
+        # or not bit 0 of data[18] specifies temperature scale in
+        # encrypted spa controllers.
+        # if data[18] & 0x01:
+            # self.tempscale = self.TSCALE_C
+        # else:
+            # self.tempscale = self.TSCALE_F
+
         # Modified for Prolink; was data[25] for Balboa 
         settemp = float(data[21])
         self.curtemp = curtemp / (2 if self.tempscale ==
@@ -1305,12 +1319,6 @@ DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, 
             # self.timescale = self.TIMESCALE_12H
         # else:
             # self.timescale = self.TIMESCALE_24H
-
-        # Modified for Prolink; was data[14] for Balboa (= 0x02)
-        # if data[18] & 0x01:
-            # self.tempscale = self.TSCALE_C
-        # else:
-            # self.tempscale = self.TSCALE_F
 
         # Byte 19 = don't care? (= 0x00)
         # self.statusByte19 = data[19]
@@ -1842,10 +1850,13 @@ DATE: 05/18/23 TIME:2:40PM, WS: 103, WT 102, Pump 1: OFF, Pump 2 OFF, LED: OFF, 
         return ("Water Temp: {0}".format(self.get_curtemp()))
 
     def get_2ndtemp_text(self):  
-        return ("2nd Temp: {0}".format(self.statusByte21)) 
+        if (self.tempscale == self.TSCALE_C):
+            return ("2nd Temp: {0}".format(self.to_celsius(self.statusByte21)))
+        else:
+            return ("2nd Temp: {0}".format(self.statusByte21))
 
     def get_settemp_text(self):  
-        return ("Setpoint Temp: {0}".format(self.get_settemp())) 
+        return ("Setpoint Temp: {0}".format(self.get_settemp()))
 
     def change_settemp(self, newtemp):
         self.send_temp_change(newtemp)
